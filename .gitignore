@@ -28,6 +28,3 @@ venv/
 runs/
 datasets/
 checkpoints/
-
-# YOLO weights or repos if not using submodule
-yolov10/
