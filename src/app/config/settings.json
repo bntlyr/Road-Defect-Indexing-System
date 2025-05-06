@@ -1,0 +1,11 @@
+{
+    "input_path": "C:/Users/bentl/Desktop/THESIS_ROAD-DEFECT/saves",
+    "output_path": "C:/Users/bentl/Desktop/THESIS_ROAD-DEFECT/saves",
+    "organization_type": "date",
+    "auto_delete_raw": false,
+    "confidence_threshold": 0.19999999999999996,
+    "auto_upload": false,
+    "detect_Linear-Crack": true,
+    "detect_Alligator-Crack": true,
+    "detect_pothole": true
+}

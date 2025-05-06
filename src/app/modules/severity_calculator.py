@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from preprocessing_severity import apply_variance_thresholding, apply_niblack_thresholding, reduce_noise
+from ..utils.preprocess_utils import apply_variance_thresholding, apply_niblack_thresholding, reduce_noise
 
 class SeverityCalculator:
     def __init__(self, camera_width, camera_height, focal_length=35, sensor_width=36, sensor_height=24):
