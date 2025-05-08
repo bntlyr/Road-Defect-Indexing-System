@@ -9,6 +9,8 @@ from PIL import Image, PngImagePlugin
 import threading
 import queue
 from concurrent.futures import ThreadPoolExecutor
+import piexif
+from piexif.helper import UserComment
 
 class DefectDetector:
     def __init__(self, model_path, save_dir=None):
@@ -83,38 +85,56 @@ class DefectDetector:
             except Exception as e:
                 print(f"Error in save worker: {e}")
 
+
     def _save_detection(self, frame, metadata):
         """Internal method to save detection (called by worker thread)"""
         try:
             # Create timestamp for filename
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            # Create filename
-            image_filename = f"detection_{timestamp}.png"
+            image_filename = f"detection_{timestamp}.jpg"
             image_path = os.path.join(self.save_dir, image_filename)
-            
-            # Convert OpenCV BGR image to RGB for PIL
+
+            # Convert OpenCV BGR image to RGB and then to PIL Image
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil_image = Image.fromarray(rgb_frame)
-            
-            # Create PNG info object for metadata
-            png_info = PngImagePlugin.PngInfo()
-            
-            # Format metadata as string
-            metadata_str = f"Total Defect Count: {metadata['Total Defect Count']}\n"
-            metadata_str += f"Average Severity Area: {metadata['Average Severity Area']}\n"
-            metadata_str += "Defects:\n"
-            metadata_str += json.dumps(metadata['Defects'], indent=2)
-            metadata_str += f"\nLocation: {metadata['Location'][0]}, {metadata['Location'][1]}"
-            
-            # Add metadata to PNG info
-            png_info.add_text("Defect_Report", metadata_str)
-            
-            # Save image with embedded metadata
-            pil_image.save(image_path, "PNG", pnginfo=png_info)
-            
+
+            # Prepare EXIF dictionary
+            exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
+
+            # Add GPS data if available
+            lat, lon = metadata.get("Location", (0.0, 0.0))
+            if lat and lon:
+                def _to_deg(value, loc):
+                    deg = int(value)
+                    min_float = (value - deg) * 60
+                    min = int(min_float)
+                    sec = round((min_float - min) * 60 * 10000)
+                    return ((deg, 1), (min, 1), (sec, 10000)), loc
+
+                lat_data, lat_ref = _to_deg(abs(lat), "N" if lat >= 0 else "S")
+                lon_data, lon_ref = _to_deg(abs(lon), "E" if lon >= 0 else "W")
+
+                exif_dict['GPS'][piexif.GPSIFD.GPSLatitudeRef] = lat_ref
+                exif_dict['GPS'][piexif.GPSIFD.GPSLatitude] = lat_data
+                exif_dict['GPS'][piexif.GPSIFD.GPSLongitudeRef] = lon_ref
+                exif_dict['GPS'][piexif.GPSIFD.GPSLongitude] = lon_data
+
+            # Add defect data as a UserComment
+            defect_report = {
+                "Total Defect Count": metadata["Total Defect Count"],
+                "Average Severity Area": metadata["Average Severity Area"],
+                "Defects": metadata["Defects"]
+            }
+            comment_str = json.dumps(defect_report, indent=2)
+            exif_dict['Exif'][piexif.ExifIFD.UserComment] = UserComment.dump(comment_str)
+
+            # Insert EXIF and save
+            exif_bytes = piexif.dump(exif_dict)
+            pil_image.save(image_path, "jpeg", exif=exif_bytes)
+
         except Exception as e:
             print(f"Error saving detection: {e}")
+
 
     def update_save_dir(self, new_save_dir):
         """Update the save directory"""
