@@ -81,25 +81,20 @@ class Camera:
     def initialize(self) -> bool:
         """Initialize camera with default settings"""
         try:
-            # Try to open camera
-            self.cap = cv2.VideoCapture(self.camera_index)
+            # Try to open camera with DSHOW backend first (better for Windows)
+            self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
             if not self.cap.isOpened():
-                self.logger.error(f"Failed to open camera {self.camera_index}")
-                return False
+                # Fallback to default backend
+                self.cap = cv2.VideoCapture(self.camera_index)
+                if not self.cap.isOpened():
+                    self.logger.error(f"Failed to open camera {self.camera_index}")
+                    return False
 
-            # Test if we can read a frame
-            ret, frame = self.cap.read()
-            if not ret or frame is None:
-                self.logger.error(f"Failed to read frame from camera {self.camera_index}")
-                self.cap.release()
-                return False
-
-            # Set resolution
+            # Set camera properties for optimal performance
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
-            
-            # Set FPS
             self.cap.set(cv2.CAP_PROP_FPS, self.fps)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer size
             
             # Get actual resolution that was set
             actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -123,40 +118,46 @@ class Camera:
             
     def get_frame(self) -> Optional[any]:
         """Get frame from camera"""
-        if not self.is_initialized or self.cap is None:
-            # Try to reinitialize if not initialized
-            if not self.initialize():
-                return None
+        if not self.is_initialized or not self.is_streaming or self.cap is None:
+            return None
             
         try:
             # Try to read frame
             ret, frame = self.cap.read()
             
-            # If frame read failed, try to recover
+            # If frame read failed, try to recover once
             if not ret or frame is None:
                 self.logger.warning("Failed to read frame, attempting recovery...")
                 # Release and reinitialize camera
                 if self.cap:
                     self.cap.release()
-                self.cap = cv2.VideoCapture(self.camera_index)
+                    self.cap = None
                 
-                # Try to set camera properties again
-                if self.cap.isOpened():
-                    self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
-                    self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
-                    self.cap.set(cv2.CAP_PROP_FPS, self.fps)
-                    
-                    # Try reading frame again
-                    ret, frame = self.cap.read()
-                    if not ret or frame is None:
-                        self.logger.error("Failed to recover camera")
+                # Try to reinitialize once with DSHOW backend
+                self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+                if not self.cap.isOpened():
+                    # Fallback to default backend
+                    self.cap = cv2.VideoCapture(self.camera_index)
+                    if not self.cap.isOpened():
+                        self.logger.error("Failed to reinitialize camera")
+                        self.is_initialized = False
                         return None
-                else:
-                    self.logger.error("Failed to reinitialize camera")
-                    return None
                 
+                # Set camera properties for optimal performance
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
+                self.cap.set(cv2.CAP_PROP_FPS, self.fps)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer size
+                
+                # Try reading frame one more time
+                ret, frame = self.cap.read()
+                if not ret or frame is None:
+                    self.logger.error("Failed to recover camera")
+                    self.is_initialized = False
+                    return None
+            
             # Validate frame dimensions and data
-            if frame.size == 0 or frame.shape[0] == 0 or frame.shape[1] == 0:
+            if frame is None or frame.size == 0 or frame.shape[0] == 0 or frame.shape[1] == 0:
                 self.logger.warning("Invalid frame dimensions")
                 return None
                 
@@ -169,20 +170,8 @@ class Camera:
             
         except Exception as e:
             self.logger.error(f"Error getting frame: {e}")
-            # Try to reinitialize camera if frame reading fails
-            try:
-                if self.cap:
-                    self.cap.release()
-                self.cap = cv2.VideoCapture(self.camera_index)
-                if not self.cap.isOpened():
-                    self.logger.error("Failed to reinitialize camera")
-                    return None
-                # Set camera properties again
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
-                self.cap.set(cv2.CAP_PROP_FPS, self.fps)
-            except Exception as reinit_error:
-                self.logger.error(f"Error reinitializing camera: {reinit_error}")
+            # On error, mark camera as not initialized to prevent further attempts
+            self.is_initialized = False
             return None
 
     def get_camera_name(self, index: int) -> str:
@@ -203,11 +192,11 @@ class Camera:
     def release(self):
         """Release camera resources"""
         try:
+            self.is_streaming = False  # Stop streaming first
             if self.cap is not None:
                 self.cap.release()
                 self.cap = None
             self.is_initialized = False
-            self.is_streaming = False
         except Exception as e:
             self.logger.error(f"Error releasing camera: {e}")
             

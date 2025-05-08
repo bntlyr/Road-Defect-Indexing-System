@@ -3,7 +3,7 @@
     "output_path": "C:/Users/bentl/Desktop/THESIS_ROAD-DEFECT/saves",
     "organization_type": "date",
     "auto_delete_raw": false,
-    "confidence_threshold": 0.19999999999999996,
+    "confidence_threshold": 0.15000000000000002,
     "auto_upload": false,
     "detect_Linear-Crack": true,
     "detect_Alligator-Crack": true,

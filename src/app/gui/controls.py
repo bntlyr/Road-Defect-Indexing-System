@@ -2,6 +2,7 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import os
+from .severity_calculator_window import SeverityCalculatorWindow
 
 class ControlPanel(ctk.CTkFrame):
     def __init__(self, parent):
@@ -31,7 +32,7 @@ class ControlPanel(ctk.CTkFrame):
         self.severity_button = ctk.CTkButton(
             self,
             text="Calculate Severity",
-            command=self.parent.calculate_severity
+            command=self.open_severity_calculator
         )
         self.severity_button.pack(pady=5, padx=10, fill="x")
 
@@ -95,3 +96,18 @@ class ControlPanel(ctk.CTkFrame):
             if not self.parent.gps_reader.connect_manually('COM3'):
                 # If connection fails immediately, reset button state
                 self.gps_button.configure(text="Connect GPS", fg_color=["#3B8ED0", "#1F6AA5"]) 
+
+    def open_severity_calculator(self):
+        # Get input and output directories from settings or defaults
+        input_dir = None
+        output_dir = None
+        # Try to get from parent/settings
+        if hasattr(self.parent, 'storage_path'):
+            input_dir = self.parent.storage_path
+        if hasattr(self.parent, 'current_save_dir'):
+            output_dir = self.parent.current_save_dir
+        if not input_dir:
+            input_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+        if not output_dir:
+            output_dir = os.path.expanduser("~")
+        SeverityCalculatorWindow(self, input_dir, output_dir) 

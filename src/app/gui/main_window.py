@@ -160,10 +160,27 @@ class App(ctk.CTk):
 
     def video_loop(self):
         """Main video processing loop"""
+        if not hasattr(self, '_is_running'):
+            self._is_running = True
+            
+        if not self._is_running:
+            return
+            
         try:
             if self.camera and self.camera.is_initialized and self.camera.is_streaming:
                 # Get frame from camera
                 frame = self.camera.get_frame()
+                
+                # If camera is no longer initialized, try to restart it
+                if frame is None and not self.camera.is_initialized:
+                    self.logger.warning("Camera lost connection, attempting to restart...")
+                    self.stop_camera()
+                    self.start_camera()
+                    # Schedule next frame update immediately
+                    if self._is_running:
+                        self.after(1, self.video_loop)
+                    return
+                
                 if frame is not None:
                     # Get GPS data if available
                     gps_data = None
@@ -206,13 +223,15 @@ class App(ctk.CTk):
                     if hasattr(self, 'status_bar'):
                         self.status_bar.update()
             
-            # Schedule next frame
-            self.after(10, self.video_loop)
-            
+            # Schedule next frame update immediately
+            if self._is_running:
+                self.after(1, self.video_loop)
+                
         except Exception as e:
             self.logger.error(f"Error in video loop: {e}")
-            # Schedule next frame even if there's an error
-            self.after(10, self.video_loop)
+            # On error, try to restart camera immediately
+            if self._is_running:
+                self.after(1, self.video_loop)
 
     def save_detection_results(self, frame):
         """Save detection results with metadata"""
@@ -298,6 +317,7 @@ class App(ctk.CTk):
         """Stop and release the camera"""
         try:
             if self.camera:
+                self.camera.is_streaming = False  # Signal camera to stop streaming
                 self.camera.release()
                 self.camera = None
             self.camera_thread = None
@@ -324,43 +344,49 @@ class App(ctk.CTk):
     def on_closing(self):
         """Orderly and forceful shutdown to prevent hangs."""
         try:
-            # 1. Signal all background threads/resources to stop
+            # 1. Stop the video loop
+            self._is_running = False
+            
+            # 2. Signal all background threads/resources to stop
             try:
                 if hasattr(self, 'gps_reader'):
-                    self.gps_reader.is_running = False  # If you have such a flag
+                    self.gps_reader.is_running = False
                     self.gps_reader.stop()
             except Exception:
                 pass
+                
             try:
                 if hasattr(self, 'detector'):
                     self.detector.cleanup()
             except Exception:
                 pass
+                
             try:
                 if hasattr(self, 'stats_panel'):
                     self.stats_panel.cleanup()
             except Exception:
                 pass
+                
             try:
                 self.stop_camera()
             except Exception:
                 pass
 
-            # 2. Destroy all child widgets
+            # 3. Destroy all child widgets
             try:
                 for widget in self.winfo_children():
                     widget.destroy()
             except Exception:
                 pass
 
-            # 3. Destroy the main window
+            # 4. Destroy the main window
             try:
                 self.destroy()
             except Exception:
                 pass
 
         finally:
-            # 4. Force kill the process, no matter what
+            # 5. Force kill the process, no matter what
             os._exit(0)
         
     def quit(self):
