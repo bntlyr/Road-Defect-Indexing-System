@@ -1,3 +1,0 @@
-"""
-Road Defect Detection System
-""" 
