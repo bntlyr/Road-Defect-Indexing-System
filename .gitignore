@@ -1,0 +1,29 @@
+# Node.js dependencies
+node_modules/
+
+# Python virtual environment
+venv/
+
+# Flask / Python related
+__pycache__/
+*.pyc
+
+# Next.js build output
+.next/
+out/
+
+# Electron build output
+dist/
+electron/
+
+# Environment variables
+.env
+
+# Logs
+*.log
+
+# macOS system files
+.DS_Store
+
+# Windows system files
+Thumbs.db
