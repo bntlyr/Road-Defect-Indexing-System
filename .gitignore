@@ -28,3 +28,4 @@ venv/
 runs/
 datasets/
 checkpoints/
+node_modules
