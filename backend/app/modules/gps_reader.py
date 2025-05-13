@@ -313,6 +313,18 @@ class GPSReader:
         """Get the number of satellites in view."""
         return self.gps_data.num_satellites
 
+    def check_for_new_devices(self):
+        """Check for newly connected GPS devices."""
+        self.logger.info("Checking for new GPS devices...")
+        # Implement logic to find and connect to new GPS devices
+        # For example, you can call find_gps_port() to check for new devices
+        new_port = self.find_gps_port()
+        if new_port and new_port != self.gps_port:
+            self.logger.info(f"New GPS device found on {new_port}. Connecting...")
+            self.connect_manually(new_port)
+        else:
+            self.logger.info("No new GPS devices found.")
+
 if __name__ == "__main__":
     gps_reader = GPSReader()
     if gps_reader.start():

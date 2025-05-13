@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, SetStateAction } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Slider } from "@/components/ui/slider"
 import { Button } from "@/components/ui/button"
@@ -212,7 +212,11 @@ export default function Dashboard() {
   const togglePlay = () => {
     const newIsPlaying = !isPlaying;
     setIsPlaying(newIsPlaying);
-    addLog("info", newIsPlaying ? "Video stream started" : "Video stream paused");
+    if (newIsPlaying) {
+      addLog("info", "Video stream started");
+    } else {
+      stopStream();
+    }
   }
 
   // Update video stream state and refs
@@ -488,27 +492,32 @@ export default function Dashboard() {
   const fetchCameras = async () => {
     try {
       setCameraLoading(true);
-      const response = await axios.get<CameraDevice[]>('http://127.0.0.1:5000/cameras');
-      const cameras = response.data;
+      const response = await axios.get<{ cameras: CameraDevice[] }>('http://127.0.0.1:5000/cameras');
+      const cameras = response.data.cameras; // Correctly access the cameras array
+      console.log('Fetched cameras:', cameras); // Log the fetched camera data
       
-      if (cameras && cameras.length > 0) {
-        setAvailableCameras(cameras);
+      if (cameras && Object.keys(cameras).length > 0) { // Check if cameras object is not empty
+        setAvailableCameras(Object.values(cameras)); // Convert object to array
         // Select first camera by default if none selected
         if (!selectedCamera) {
-          const firstCamera = cameras[0];
+          const firstCamera = Object.values(cameras)[0];
           setSelectedCamera(firstCamera.device_id);
           // Set initial camera settings
           setBrightness(firstCamera.brightness || 50);
           setExposure(firstCamera.exposure || 50);
+          setZoom(1.0); // Ensure zoom is set to default
           // Set initial resolution
           const resolutions = Object.keys(firstCamera.supported_resolutions || {});
           if (resolutions.length > 0) {
             setSelectedResolution(resolutions[0]);
+            setFps(firstCamera.supported_resolutions[resolutions[0]][0].toString());
           }
         }
       } else {
         setAvailableCameras([]);
-        addLog("warning", "No cameras found");
+        addLog("warning", "No cameras found, retrying...");
+        // Retry fetching cameras after a delay
+        setTimeout(fetchCameras, 2000);
       }
     } catch (err: unknown) {
       const error = err as Error;
@@ -522,10 +531,10 @@ export default function Dashboard() {
 
   // Add zoom handler
   const handleZoomChange = async (value: number[]) => {
-    const newZoom = value[0]
-    setZoom(newZoom)
-    await handleVideoControls({ zoom: newZoom })
-  }
+    const newZoom = value[0];
+    setZoom(newZoom);
+    await handleVideoControls({ zoom: newZoom });
+  };
 
   // Update handleVideoControls function
   const handleVideoControls = async (newSettings: Partial<CameraSettings>) => {
@@ -538,8 +547,9 @@ export default function Dashboard() {
       if (response.status === 200) {
         const camera = availableCameras.find(c => c.device_id === updatedSettings.device);
         if (camera) {
-          setBrightness(camera.brightness);
-          setExposure(camera.exposure);
+          setBrightness(updatedSettings.brightness || camera.brightness);
+          setExposure(updatedSettings.exposure || camera.exposure);
+          setZoom(updatedSettings.zoom || 1.0);
         }
       }
     } catch (error) {
@@ -552,59 +562,41 @@ export default function Dashboard() {
 
   // Update the brightness handler
   const handleBrightnessChange = async (value: number[]) => {
-    const newBrightness = value[0]
-    setBrightness(newBrightness)
-    await handleVideoControls({ brightness: newBrightness })
-  }
+    const newBrightness = value[0];
+    setBrightness(newBrightness);
+    await handleVideoControls({ brightness: newBrightness });
+  };
 
   // Update the exposure handler
   const handleExposureChange = async (value: number[]) => {
-    const newExposure = value[0]
-    setExposure(newExposure)
-    await handleVideoControls({ exposure: newExposure })
-  }
+    const newExposure = value[0];
+    setExposure(newExposure);
+    await handleVideoControls({ exposure: newExposure });
+  };
 
   // Update the resolution selection component
   const ResolutionSelect = () => {
-    const currentCamera = availableCameras.find(c => c.device_id === selectedCamera)
-    const resolutions = currentCamera?.supported_resolutions || {}
+    const currentCamera = availableCameras.find(c => c.device_id === selectedCamera);
+    const resolutions = currentCamera?.supported_resolutions || {};
 
     const handleResolutionChange = async (newResolution: string) => {
       try {
         setResolution(newResolution);
         // Reset fps to first available option for new resolution
-        const newFps = Object.keys(resolutions)[0] || "30";
+        const newFps = resolutions[newResolution][0].toString();
         setFps(newFps);
-         setSelectedFps(parseInt(newFps));
-         await detectionApi.capture({
-           device: selectedCamera,
-           resolution: newResolution,
-           fps: parseInt(newFps),
-           brightness,
-           exposure,
-           flip_vertical: flipVertical,
-           zoom
-         });
+        setSelectedFps(parseInt(newFps));
+        await handleVideoControls({
+          device: selectedCamera,
+          resolution: newResolution,
+          fps: parseInt(newFps),
+          brightness,
+          exposure,
+          flip_vertical: flipVertical,
+          zoom
+        });
       } catch (err) {
-         console.error("Error changing resolution:", err);
-      }
-    };
-
-    const handleFpsChange = async (newFps: string) => {
-      try {
-         setFps(newFps);
-         setSelectedFps(parseInt(newFps));
-         await detectionApi.capture({
-           device: selectedCamera,
-           resolution,
-           fps: parseInt(newFps),
-           brightness,
-           exposure,
-           flip_vertical: flipVertical,
-           zoom
-         });
-      } catch (err) {
-         console.error("Error changing fps:", err);
+        console.error("Error changing resolution:", err);
       }
     };
 
@@ -612,19 +604,18 @@ export default function Dashboard() {
       <div className="space-y-2 w-full">
         <Label htmlFor="resolution" className="text-sm font-medium text-white">Resolution</Label>
         <Select 
-          value={`${selectedResolution}@${selectedFps}fps`} 
-          onValueChange={async (value) => {
+          value={`${selectedResolution}@${selectedFps}fps`}
+          onValueChange={async (value: string) => {
             try {
-               setCameraLoading(true)
-               const [res, fps] = value.split('@')
-               setSelectedResolution(res)
-               setSelectedFps(parseInt(fps))
-               await handleResolutionChange(res)
+              setCameraLoading(true);
+              const [res, fps] = value.split('@');
+              setSelectedResolution(res);
+              setSelectedFps(parseInt(fps));
+              await handleResolutionChange(res);
             } catch (error) {
-               console.error("Error changing resolution:", error)
-               addLog("error", "Failed to change resolution")
+              console.error("Error handling resolution change:", error);
             } finally {
-               setCameraLoading(false)
+              setCameraLoading(false);
             }
           }}
           disabled={cameraLoading || !currentCamera}
@@ -647,27 +638,37 @@ export default function Dashboard() {
           </SelectContent>
         </Select>
       </div>
-    )
-  }
+    );
+  };
 
-  const handleCameraChange = (newCamera: string) => {
+  const handleCameraChange = async (newCamera: string) => {
     setSelectedCamera(newCamera);
-    // Reset to first available resolution and fps
-    const currentCamera = availableCameras.find(c => c.device_id === newCamera);
-    const resolutions = currentCamera?.supported_resolutions || {};
-    const firstResolution = Object.keys(resolutions)[0] || "1280x720";
-    setSelectedResolution(firstResolution);
-    
-    // Update settings
-    handleVideoControls({
-      device: newCamera,
-      resolution: firstResolution,
-      fps: selectedFps,
-      brightness: currentCamera?.brightness || 50,
-      exposure: currentCamera?.exposure || 50,
-      flip_vertical: false,
-      zoom: 1
-    });
+    const selectedCam = availableCameras.find(cam => cam.device_id === newCamera);
+    if (selectedCam) {
+      // Convert the keys of supported_resolutions to an array of strings
+      setAvailableResolutions(Object.keys(selectedCam.supported_resolutions));
+      setSelectedResolution(selectedCam.resolution);
+      await updateCameraSettings(selectedCam);
+    }
+  };
+
+  const updateCameraSettings = async (camera: CameraDevice) => {
+    setCameraLoading(true);
+    try {
+      await handleVideoControls({
+        device: camera.device_id,
+        resolution: selectedResolution,
+        fps: parseInt(fps),
+        brightness,
+        exposure,
+        flip_vertical: flipVertical,
+        zoom
+      });
+    } catch (error) {
+      console.error("Error updating camera settings:", error);
+    } finally {
+      setCameraLoading(false);
+    }
   };
 
   // Update camera selection component
@@ -697,6 +698,15 @@ export default function Dashboard() {
     </div>
   );
 
+  // Add a function to stop the camera stream
+  const stopStream = () => {
+    setIsPlaying(false);
+    if (imgRef.current) {
+      imgRef.current.src = '';
+    }
+    addLog("info", "Video stream stopped");
+  };
+
   return (
     <div className="h-screen flex flex-col bg-[#0a0a0a] overflow-hidden">
       <LoadingDialog />
@@ -725,6 +735,7 @@ export default function Dashboard() {
                   variant="outline"
                   className="mt-4 bg-[#050e39] hover:bg-[#0a1a5a] text-white"
                   onClick={() => setIsPlaying(true)}
+                  disabled={!selectedCamera || !selectedResolution}
                 >
                   <Play className="h-4 w-4 mr-2" />
                   Start Live Feed
@@ -774,23 +785,33 @@ export default function Dashboard() {
             <span className="text-base text-white">Video Controls</span>
           </div>
           <div className="p-4 flex-1 flex flex-col justify-between">
-            <div className="grid grid-cols-2 gap-4 p-2">
+            <div className="grid grid-row gap-4 ml-1 p-2">
               <CameraSelect />
-              <ResolutionSelect />
             </div>
 
-            <div className="space-y-4 mt-4">
-              <div className="flex justify-between items-center">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={`h-8 px-2 ${flipVertical ? 'bg-[#050e39] text-white' : 'bg-[#1a1a1a] text-white'}`}
-                  onClick={toggleFlipVertical}
-                >
-                  <FlipVertical className="h-4 w-4 mr-1" />
-                  Flip Vertical
-                </Button>
-              </div>
+            <div className="space-y-4 mt-4 ml-3 mr-3">
+            <div className="mr-4">
+              <div className="flex flex-col sm:flex-row sm:justify-between items-center gap-4 w-full mr-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={`h-10 px-4 w-full sm:w-1/2 ${flipVertical ? 'bg-[#050e39] text-white' : 'bg-[#1a1a1a] text-white'}`}
+                    onClick={toggleFlipVertical}
+                  >
+                    <FlipVertical className="h-4 w-4 mr-2" />
+                    Flip Vertical
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-10 px-4 w-full sm:w-1/2 bg-[#1a1a1a] text-white"
+                    onClick={stopStream}
+                  >
+                    Stop Stream
+                  </Button>
+                </div>
+            </div>
+            
 
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
@@ -1022,7 +1043,7 @@ export default function Dashboard() {
                       <Checkbox
                         id="organize-date"
                         checked={organizeByDate}
-                        onCheckedChange={(checked) => setOrganizeByDate(checked as boolean)}
+                        onCheckedChange={(checked: boolean) => setOrganizeByDate(checked as boolean)}
                       />
                       <div className="grid gap-1.5">
                         <Label htmlFor="organize-date" className="text-white">
@@ -1036,7 +1057,7 @@ export default function Dashboard() {
                       <Checkbox
                         id="auto-delete"
                         checked={autoDeleteRaw}
-                        onCheckedChange={(checked) => setAutoDeleteRaw(checked as boolean)}
+                        onCheckedChange={(checked: boolean) => setAutoDeleteRaw(checked as boolean)}
                       />
                       <div className="grid gap-1.5">
                         <Label htmlFor="auto-delete" className="text-white">
@@ -1058,7 +1079,7 @@ export default function Dashboard() {
                     </div>
                     <Slider
                       value={[confidenceThreshold]}
-                      onValueChange={(value) => setConfidenceThreshold(value[0])}
+                      onValueChange={(value: SetStateAction<number>[]) => setConfidenceThreshold(value[0])}
                       min={0}
                       max={1}
                       step={0.01}
@@ -1077,7 +1098,7 @@ export default function Dashboard() {
                         <Checkbox
                           id="linear-cracks"
                           checked={classFilter.includes("linear")}
-                          onCheckedChange={(checked) => {
+                          onCheckedChange={(checked: any) => {
                             if (checked) {
                               setClassFilter((prev) => [...prev, "linear"])
                             } else {
@@ -1094,7 +1115,7 @@ export default function Dashboard() {
                         <Checkbox
                           id="alligator-cracks"
                           checked={classFilter.includes("alligator")}
-                          onCheckedChange={(checked) => {
+                          onCheckedChange={(checked: any) => {
                             if (checked) {
                               setClassFilter((prev) => [...prev, "alligator"])
                             } else {
@@ -1111,7 +1132,7 @@ export default function Dashboard() {
                         <Checkbox
                           id="potholes"
                           checked={classFilter.includes("pothole")}
-                          onCheckedChange={(checked) => {
+                          onCheckedChange={(checked: any) => {
                             if (checked) {
                               setClassFilter((prev) => [...prev, "pothole"])
                             } else {

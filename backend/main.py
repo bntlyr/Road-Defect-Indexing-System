@@ -16,6 +16,7 @@ import signal
 import threading
 import time
 import os
+from typing import Optional
 
 # Configure logging with more detail
 logging.basicConfig(
@@ -111,25 +112,24 @@ def check_for_new_devices():
     last_device_check = current_time
     
     try:
-        # Check for new cameras
-        if camera is not None:
-            available_cameras = camera.get_available_cameras()
+        # Check for new cameras only if the camera is not initialized
+        if camera is None or not camera.is_initialized:
+            available_cameras = camera.get_available_cameras() if camera else {}
             usable_cameras = {}
             for cam_id, cam_info in available_cameras.items():
-                if "HID" in str(cam_info.get("name", "")).upper():
+                if isinstance(cam_info, dict) and "HID" in str(cam_info.get("name", "")).upper():
                     continue  # skip non-camera devices
                 usable_cameras[cam_id] = cam_info
             
             # If current camera is built-in and we have USB cameras available, switch to USB
-            if camera.camera_type == 'BUILT_IN':
+            if camera and camera.is_initialized:
                 for cam_id, cam_info in usable_cameras.items():
-                    if cam_info.get('camera_type') == 'USB':
-                        logger.info(f"Switching to USB camera: {cam_info['name']}")
-                        camera.switch_camera(int(cam_id))
-                        break
+                    logger.info(f"Switching to camera: {cam_info['name']}")
+                    camera.switch_camera(int(cam_id))
+                    break
             
             # If current camera is no longer available, switch to first available camera
-            elif camera.device_id not in usable_cameras:
+            elif camera and camera.device_id not in usable_cameras:
                 logger.warning("Current camera no longer available, switching to first available camera")
                 if usable_cameras:
                     first_cam_id = next(iter(usable_cameras))
@@ -157,97 +157,41 @@ def initialize_services():
     try:
         # Initialize GPS Reader
         logger.info("Initializing GPS Reader...")
-        try:
-            if gps_reader is None:
-                gps_reader = GPSReader()
-                logger.info("GPS Reader initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize GPS Reader: {str(e)}")
-            logger.error(traceback.format_exc())
-            gps_reader = None
+        if gps_reader is None:
+            gps_reader = GPSReader()
+            logger.info("GPS Reader initialized successfully")
 
         # Initialize Defect Detector
         logger.info("Initializing Defect Detector...")
-        try:
-            if defect_detector is None:
-                model_path = os.path.join(os.path.dirname(__file__), 'app', 'models', 'last.pt')
-                if not os.path.exists(model_path):
-                    logger.error(f"Model file not found at {model_path}")
-                    raise FileNotFoundError(f"Model file not found at {model_path}")
-                defect_detector = DefectDetector(model_path=model_path)
-                logger.info("Defect Detector initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Defect Detector: {str(e)}")
-            logger.error(traceback.format_exc())
-            defect_detector = None
+        if defect_detector is None:
+            model_path = os.path.join(os.path.dirname(__file__), 'app', 'models', 'last.pt')
+            if not os.path.exists(model_path):
+                logger.error(f"Model file not found at {model_path}")
+                raise FileNotFoundError(f"Model file not found at {model_path}")
+            defect_detector = DefectDetector(model_path=model_path)
+            logger.info("Defect Detector initialized successfully")
 
         # Initialize Cloud Storage
         logger.info("Initializing Cloud Storage...")
-        try:
-            if cloud_storage is None:
-                cloud_storage = CloudStorage()
-                logger.info("Cloud Storage initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Cloud Storage: {str(e)}")
-            logger.error(traceback.format_exc())
-            cloud_storage = None
+        if cloud_storage is None:
+            cloud_storage = CloudStorage()
+            logger.info("Cloud Storage initialized successfully")
 
         # Initialize Camera with timeout
         logger.info("Initializing Camera...")
-        try:
-            if camera is None or not camera.is_initialized:
-                camera = Camera()
-                start_time = time.time()
-                
-                # Wait for camera initialization with timeout
-                while not camera.is_initialized and time.time() - start_time < camera_init_timeout:
-                    time.sleep(0.1)
-                
-                if camera.is_initialized:
-                    # Filter out non-usable cameras (e.g. HID controllers) and log available ones
-                    available_cameras = camera.get_available_cameras()
-                    usable_cameras = {}
-                    for cam_id, cam_info in available_cameras.items():
-                        if "HID" in str(cam_info.get("name", "")).upper():
-                            continue  # skip non-camera devices
-                        usable_cameras[cam_id] = cam_info
-                        logger.info(f"Found usable camera: {cam_info.get('name')} (ID: {cam_id})")
-                    
-                    if not usable_cameras:
-                        logger.warning("No usable cameras found, using default camera")
-                        usable_cameras = {
-                            "0": {
-                                "name": "Default Camera",
-                                "device_id": "0",
-                                "camera_type": "BUILT_IN",
-                                "resolution": "1280x720",
-                                "fps": 30,
-                                "brightness": 75,
-                                "exposure": 75,
-                                "supported_resolutions": {"1280x720": [30, 60]}
-                            }
-                        }
-                    
-                    # Update camera cache with only usable cameras
-                    camera_cache = {
-                        'cameras': usable_cameras,
-                        'timestamp': time.time()
-                    }
-                    
-                    # Try to switch to first usable camera
-                    if usable_cameras:
-                        first_cam_id = next(iter(usable_cameras))
-                        logger.info(f"Switching to first usable camera: {usable_cameras[first_cam_id].get('name')}")
-                        camera.switch_camera(int(first_cam_id))
-                    
-                    logger.info("Camera initialized successfully")
-                else:
-                    logger.error("Camera initialization timed out")
-                    camera = None
-        except Exception as e:
-            logger.error(f"Failed to initialize Camera: {str(e)}")
-            logger.error(traceback.format_exc())
-            camera = None
+        if camera is None or not camera.is_initialized:
+            camera = Camera()
+            start_time = time.time()
+            
+            # Wait for camera initialization with timeout
+            while not camera.is_initialized and time.time() - start_time < camera_init_timeout:
+                time.sleep(0.1)
+            
+            if camera.is_initialized:
+                logger.info("Camera initialized successfully")
+            else:
+                logger.error("Camera initialization timed out")
+                camera = None
 
         # Mark initialization as complete
         initialization_complete = True
@@ -255,7 +199,6 @@ def initialize_services():
 
     except Exception as e:
         logger.error(f"Error during service initialization: {str(e)}")
-        logger.error(traceback.format_exc())
         initialization_complete = True
     finally:
         initialization_started = False
@@ -404,7 +347,6 @@ def get_cameras():
                     '0': {
                         'name': "Default Camera",
                         'device_id': None,
-                        'camera_type': 'BUILT_IN',
                         'resolution': "1280x720",
                         'fps': 30,
                         'brightness': 75,
@@ -434,7 +376,6 @@ def get_cameras():
                 '0': {
                     'name': "Default Camera",
                     'device_id': None,
-                    'camera_type': 'BUILT_IN',
                     'resolution': "1280x720",
                     'fps': 30,
                     'brightness': 75,
