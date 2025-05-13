@@ -28,6 +28,10 @@ import {
   BarChart2,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
+import { detectionApi } from "@/lib/api"
+import axios from 'axios'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { Progress } from "@/components/ui/progress"
 
 type LogType = "info" | "success" | "error" | "warning"
 
@@ -38,16 +42,112 @@ interface LogMessage {
   timestamp: string
 }
 
+// Add interfaces for API responses
+interface CamerasResponse {
+  cameras: {
+    [key: string]: string | {
+      camera_type: any
+      name: string;
+      device_id?: string;
+      resolution?: string;
+      fps?: number;
+      brightness?: number;
+      exposure?: number;
+      supported_resolutions?: {
+        [key: string]: number[];
+      };
+    };
+  };
+}
+
+interface ResolutionsResponse {
+  resolutions: string[];
+}
+
+interface UpdateSettingsResponse {
+  success: boolean;
+  error?: string;
+  resolutions?: string[];
+  current_settings?: {
+    brightness?: number;
+    exposure?: number;
+    flip_vertical?: boolean;
+    fps?: number;
+  };
+}
+
+// Add types for API responses
+interface CaptureResponse {
+  image: string;
+}
+
+interface DetectionResponse {
+  defects?: {
+    linear: number;
+    alligator: number;
+    pothole: number;
+  };
+  stats?: {
+    cpu: number;
+    gpu: number;
+    detection_time: number;
+    fps: number;
+  };
+  image?: string;
+}
+
+interface GpsResponse {
+  longitude: string;
+  latitude: string;
+}
+
+// Add new interfaces for camera and resolution data
+interface CameraDevice {
+  device_id: string;
+  name: string;
+  camera_type: string;
+  resolution: string;
+  fps: number;
+  brightness: number;
+  exposure: number;
+  supported_resolutions: { [key: string]: number[] };
+}
+
+// Update the VideoSettings interface
+interface VideoSettings {
+  device: string;
+  resolution: string;
+  brightness: number;
+  exposure: number;
+  flip_vertical: boolean;
+  zoom: number;
+  fps: number;
+}
+
+interface CameraSettings {
+  device: string;
+  resolution: string;
+  fps: number;
+  brightness: number;
+  exposure: number;
+  flip_vertical: boolean;
+  zoom: number;
+}
+
 export default function Dashboard() {
   const router = useRouter()
   // Video stream state
   const [isPlaying, setIsPlaying] = useState(false)
+  const imgRef = useRef<HTMLImageElement>(null)
+  const [liveFrame, setLiveFrame] = useState<string>("")
   const [brightness, setBrightness] = useState(50)
   const [exposure, setExposure] = useState(50)
   const [cameraDevice, setCameraDevice] = useState("default")
   const [resolution, setResolution] = useState("720p")
   const [fps, setFps] = useState("30")
   const [flipVertical, setFlipVertical] = useState(false)
+  const [zoom, setZoom] = useState(1.0)
+  const [selectedFps, setSelectedFps] = useState<number>(30)
 
   // Detection state
   const [detectionActive, setDetectionActive] = useState(false)
@@ -86,6 +186,10 @@ export default function Dashboard() {
   const logIdCounter = useRef(0)
   const logsEndRef = useRef<HTMLDivElement>(null)
 
+  // Fix hydration error: only show time after mount
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+
   const addLog = (type: LogType, message: string) => {
     const now = new Date()
     const timestamp = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`
@@ -106,51 +210,112 @@ export default function Dashboard() {
   }, [logs])
 
   const togglePlay = () => {
-    setIsPlaying(!isPlaying)
-    addLog("info", isPlaying ? "Video stream paused" : "Video stream started")
+    const newIsPlaying = !isPlaying;
+    setIsPlaying(newIsPlaying);
+    addLog("info", newIsPlaying ? "Video stream started" : "Video stream paused");
   }
 
-  const toggleDetection = () => {
+  // Update video stream state and refs
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  // Update useEffect for video stream
+  useEffect(() => {
+    if (imgRef.current) {
+      if (isPlaying) {
+        // Set the image source to the stream URL with a timestamp to prevent caching
+        const streamUrl = `http://localhost:5000/stream?t=${Date.now()}`
+        imgRef.current.src = streamUrl
+        addLog("info", "Video stream started")
+      } else {
+        // Stop the stream by removing the source
+        if (imgRef.current.src) {
+          imgRef.current.src = ''
+        }
+        addLog("info", "Video stream stopped")
+      }
+    }
+
+    return () => {
+      // Cleanup when component unmounts
+      if (imgRef.current) {
+        imgRef.current.src = ''
+      }
+    }
+  }, [isPlaying])
+
+  const toggleDetection = async () => {
     if (!detectionActive) {
-      addLog("info", "Starting detection...")
-      setDetectionActive(true)
-      // Simulate detection starting
-      simulateDetection()
+      addLog("info", "Starting detection...");
+      setDetectionActive(true);
+
+      try {
+        // Start detection by sending a request to the backend
+        const detectionResponse = await axios.post<DetectionResponse>('http://localhost:5000/detection', {
+          frame: liveFrame, // Adjust based on how you capture frames
+          gps_data: gpsData
+        });
+
+        // Handle the detection response
+        const { defects, stats } = detectionResponse.data;
+        if (defects) {
+          setLinearCracks(defects.linear);
+          setAlligatorCracks(defects.alligator);
+          setPotholes(defects.pothole);
+        }
+        if (stats) {
+          setCpuUsage(stats.cpu);
+          setGpuUsage(stats.gpu);
+          setDetectionTime(stats.detection_time);
+          setCurrentFps(stats.fps);
+        }
+      } catch (error) {
+        addLog("error", "Failed to start detection");
+        setDetectionActive(false);
+      }
     } else {
-      setDetectionActive(false)
-      addLog("info", "Detection stopped")
+      setDetectionActive(false);
+      addLog("info", "Detection stopped");
     }
+  };
+
+  const toggleFlipVertical = async () => {
+    const newFlipState = !flipVertical
+    setFlipVertical(newFlipState)
+    await handleVideoControls({ flip_vertical: newFlipState })
+    addLog("info", newFlipState ? "Video flip enabled" : "Video flip disabled")
   }
 
-  const toggleFlipVertical = () => {
-    setFlipVertical(!flipVertical)
-    addLog("info", flipVertical ? "Video flip disabled" : "Video flipped vertically")
-  }
-
-  const toggleGps = () => {
+  const toggleGps = async () => {
     if (!gpsConnected && !gpsConnecting) {
-      setGpsConnecting(true)
-      addLog("info", "Connecting to GPS...")
+      setGpsConnecting(true);
+      addLog("info", "Connecting to GPS...");
 
-      // Simulate connection delay
-      setTimeout(() => {
-        setGpsConnecting(false)
-        setGpsConnected(true)
-        addLog("success", "GPS connected successfully")
+      try {
+        // Fetch GPS data from the backend
+        const response = await axios.get<GpsResponse>('http://localhost:5000/gps'); // Specify the response type
+        const data = response.data;
 
-        // Simulate GPS data updates
-        const interval = setInterval(() => {
-          const lat = (40.7128 + Math.random() * 0.01).toFixed(6)
-          const lng = (74.006 + Math.random() * 0.01).toFixed(6)
-          setGpsData({ longitude: lng, latitude: lat })
-        }, 3000)
-        return () => clearInterval(interval)
-      }, 2000)
+        if (data && typeof data.longitude === 'string' && typeof data.latitude === 'string') {
+          setGpsData(data); // This should now work without linter errors
+          setGpsConnected(true);
+          addLog("success", "GPS connected successfully");
+        } else {
+          // Set default GPS data if invalid
+          setGpsData({ longitude: "0", latitude: "0" });
+          addLog("warning", "Invalid GPS data received, using default values.");
+            }
+          } catch (error) {
+        // Set default GPS data on error
+        setGpsData({ longitude: "0", latitude: "0" });
+        addLog("error", "Failed to connect to GPS, using default values.");
+      } finally {
+        setGpsConnecting(false);
+      }
     } else if (gpsConnected) {
-      setGpsConnected(false)
-      addLog("info", "GPS disconnected")
+      setGpsConnected(false);
+      addLog("info", "GPS disconnected");
     }
-  }
+  };
 
   const testCloudConnection = () => {
     setCloudConnecting(true)
@@ -175,100 +340,371 @@ export default function Dashboard() {
     router.push("/analysis")
   }
 
-  // Simulate detection process
-  const simulateDetection = () => {
-    if (detectionActive) {
-      const interval = setInterval(() => {
-        // Update defect counts randomly
-        const newLinear = Math.floor(Math.random() * 10)
-        const newAlligator = Math.floor(Math.random() * 5)
-        const newPotholes = Math.floor(Math.random() * 3)
-
-        // Log if new defects are found
-        if (newLinear > linearCracks) {
-          addLog("warning", `Detected ${newLinear - linearCracks} new linear crack(s)`)
-        }
-        if (newAlligator > alligatorCracks) {
-          addLog("warning", `Detected ${newAlligator - alligatorCracks} new alligator crack(s)`)
-        }
-        if (newPotholes > potholes) {
-          addLog("warning", `Detected ${newPotholes - potholes} new pothole(s)`)
-        }
-
-        setLinearCracks(newLinear)
-        setAlligatorCracks(newAlligator)
-        setPotholes(newPotholes)
-
-        // Update system stats
-        setCpuUsage(Math.floor(20 + Math.random() * 30))
-        setGpuUsage(Math.floor(40 + Math.random() * 50))
-        setDetectionTime(Math.floor(50 + Math.random() * 100))
-        setCurrentFps(Math.floor(25 + Math.random() * 5))
-
-        // Occasionally log system status
-        if (Math.random() > 0.9) {
-          if (cpuUsage > 40) {
-            addLog("warning", `High CPU usage: ${cpuUsage}%`)
-          } else {
-            addLog("info", `System running normally. CPU: ${cpuUsage}%, GPU: ${gpuUsage}%`)
-          }
-        }
-      }, 1000)
-      return () => clearInterval(interval)
-    }
-  }
-
-  // Initialize simulation
-  useEffect(() => {
-    let interval: NodeJS.Timeout
-
-    // Add initial logs
-    addLog("info", "System initialized")
-    addLog("info", "Ready to start detection")
-
-    if (detectionActive) {
-      interval = setInterval(() => {
-        // Update defect counts randomly
-        const newLinear = Math.floor(Math.random() * 10)
-        const newAlligator = Math.floor(Math.random() * 5)
-        const newPotholes = Math.floor(Math.random() * 3)
-
-        // Log if new defects are found
-        if (newLinear > linearCracks) {
-          addLog("warning", `Detected ${newLinear - linearCracks} new linear crack(s)`)
-        }
-        if (newAlligator > alligatorCracks) {
-          addLog("warning", `Detected ${newAlligator - alligatorCracks} new alligator crack(s)`)
-        }
-        if (newPotholes > potholes) {
-          addLog("warning", `Detected ${newPotholes - potholes} new pothole(s)`)
-        }
-
-        setLinearCracks(newLinear)
-        setAlligatorCracks(newAlligator)
-        setPotholes(newPotholes)
-
-        // Update system stats
-        setCpuUsage(Math.floor(20 + Math.random() * 30))
-        setGpuUsage(Math.floor(40 + Math.random() * 50))
-        setDetectionTime(Math.floor(50 + Math.random() * 100))
-        setCurrentFps(Math.floor(25 + Math.random() * 5))
-      }, 1000)
-    }
-
-    return () => {
-      if (interval) clearInterval(interval)
-    }
-  }, [detectionActive])
-
   // Format time as HH:MM:SS
   const formatTime = () => {
     const now = new Date()
     return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`
   }
 
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (isPlaying) {
+      const pollCamera = async () => {
+         try {
+          const cameraSettings = {
+            device: cameraDevice,
+            resolution,
+            fps: parseInt(fps),
+            brightness,
+            exposure,
+            flip_vertical: flipVertical,
+            zoom
+          };
+           const captureResult = await detectionApi.capture(cameraSettings) as CaptureResponse;
+           if (captureResult && captureResult.image) {
+             setLiveFrame(captureResult.image);
+           }
+         } catch (err) {
+           console.error("Error polling camera:", err);
+         }
+      };
+      // Poll every 100ms (adjust as needed) if isPlaying is true.
+      interval = setInterval(pollCamera, 100);
+    } else {
+       // Clear interval (and reset liveFrame) if isPlaying is false.
+       setLiveFrame("");
+    }
+    return () => { if (interval) clearInterval(interval); };
+  }, [isPlaying, cameraDevice, resolution, fps, brightness, exposure, flipVertical, zoom]);
+
+  // Settings state
+  const [settings, setSettings] = useState<CameraSettings>({
+    device: '',
+    resolution: '',
+    fps: 30,
+    brightness: 50,
+    exposure: 50,
+    flip_vertical: false,
+    zoom: 1
+  });
+
+  // Add new state for cameras and resolutions
+  const [availableCameras, setAvailableCameras] = useState<CameraDevice[]>([])
+  const [availableResolutions, setAvailableResolutions] = useState<string[]>([])
+  const [selectedCamera, setSelectedCamera] = useState<string>("")
+  const [selectedResolution, setSelectedResolution] = useState<string>("")
+
+  // Add new state variables after other state declarations
+  const [isBackendInitializing, setIsBackendInitializing] = useState(true)
+  const [initializationProgress, setInitializationProgress] = useState(0)
+  const [initializationStatus, setInitializationStatus] = useState("Initializing backend services...")
+  const [cameraLoading, setCameraLoading] = useState(false)
+
+  // Add state for retry count and health check
+  const [backendRetryCount, setBackendRetryCount] = useState(0);
+  const [healthCheckTimeout, setHealthCheckTimeout] = useState<NodeJS.Timeout | null>(null);
+
+  // Add new function to check backend health
+  const checkBackendHealth = async () => {
+    try {
+      // Poll health endpoint with a short timeout (500ms) so that we do not hang waiting for "ok" or camera service.
+      const response = await axios.get('http://127.0.0.1:5000/health', { timeout: 500, headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } });
+      // If we get a 200 (even if status is "initializing"), immediately hide the loading dialog and fetch cameras.
+      setInitializationProgress(100);
+      setInitializationStatus("Backend (health endpoint) responded; proceeding...");
+      setTimeout(() => { setIsBackendInitializing(false); fetchCameras(); }, 500);
+    } catch (error) {
+      console.error("Backend health check failed (or timed out):", error);
+      setInitializationStatus("Error (or timeout) connecting to backend. Retrying...");
+      setInitializationProgress(0);
+      const retryDelay = Math.min(2000 * Math.pow(1.5, backendRetryCount), 10000);
+      setBackendRetryCount(prev => prev + 1);
+      setTimeout(checkBackendHealth, retryDelay);
+    }
+  };
+
+  // Update useEffect for backend health check
+  useEffect(() => {
+    let isMounted = true;
+
+    const startHealthCheck = () => {
+      if (isMounted) {
+        checkBackendHealth();
+      }
+    };
+
+    // Start health check immediately
+    startHealthCheck();
+
+    // Cleanup function
+    return () => {
+      isMounted = false;
+      if (healthCheckTimeout) {
+        clearTimeout(healthCheckTimeout);
+      }
+    };
+  }, []); // Empty dependency array since we want this to run once on mount
+
+  // Update LoadingDialog component
+  const LoadingDialog = () => (
+    <Dialog open={isBackendInitializing} modal={true}>
+      <DialogContent className="sm:max-w-md bg-[#1a1a1a] border-[#333]">
+        <DialogHeader>
+          <DialogTitle className="text-white text-xl">Initializing Backend</DialogTitle>
+          <DialogDescription className="text-gray-300 mt-2">
+            {initializationStatus}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="py-4">
+          <Progress value={initializationProgress} className="w-full h-2 bg-[#333]" />
+          <div className="mt-4 text-center">
+            {initializationProgress === 0 && (
+              <div className="space-y-2">
+                <p className="text-sm text-gray-400">
+                  Waiting for backend server at http://localhost:5000
+                </p>
+                <p className="text-xs text-gray-500">
+                  {backendRetryCount > 0 ? `Retry attempt ${backendRetryCount}...` : 'This may take a few moments...'}
+                </p>
+              </div>
+            )}
+            {initializationProgress > 0 && initializationProgress < 100 && (
+              <p className="text-sm text-gray-400">
+                Initializing services... {Math.round(initializationProgress)}%
+              </p>
+            )}
+            {initializationProgress === 100 && (
+              <p className="text-sm text-green-400">
+                Backend initialized successfully!
+              </p>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+
+  // Update the fetchCameras function
+  const fetchCameras = async () => {
+    try {
+      setCameraLoading(true);
+      const response = await axios.get<CameraDevice[]>('http://127.0.0.1:5000/cameras');
+      const cameras = response.data;
+      
+      if (cameras && cameras.length > 0) {
+        setAvailableCameras(cameras);
+        // Select first camera by default if none selected
+        if (!selectedCamera) {
+          const firstCamera = cameras[0];
+          setSelectedCamera(firstCamera.device_id);
+          // Set initial camera settings
+          setBrightness(firstCamera.brightness || 50);
+          setExposure(firstCamera.exposure || 50);
+          // Set initial resolution
+          const resolutions = Object.keys(firstCamera.supported_resolutions || {});
+          if (resolutions.length > 0) {
+            setSelectedResolution(resolutions[0]);
+          }
+        }
+      } else {
+        setAvailableCameras([]);
+        addLog("warning", "No cameras found");
+      }
+    } catch (err: unknown) {
+      const error = err as Error;
+      console.error("Error fetching cameras:", error);
+      addLog("error", `Failed to fetch cameras: ${error.message}`);
+      setAvailableCameras([]);
+    } finally {
+      setCameraLoading(false);
+    }
+  };
+
+  // Add zoom handler
+  const handleZoomChange = async (value: number[]) => {
+    const newZoom = value[0]
+    setZoom(newZoom)
+    await handleVideoControls({ zoom: newZoom })
+  }
+
+  // Update handleVideoControls function
+  const handleVideoControls = async (newSettings: Partial<CameraSettings>) => {
+    try {
+      setCameraLoading(true);
+      const updatedSettings = { ...settings, ...newSettings };
+      setSettings(updatedSettings);
+      
+      const response = await axios.post('http://localhost:5000/camera/controls', updatedSettings);
+      if (response.status === 200) {
+        const camera = availableCameras.find(c => c.device_id === updatedSettings.device);
+        if (camera) {
+          setBrightness(camera.brightness);
+          setExposure(camera.exposure);
+        }
+      }
+    } catch (error) {
+      console.error("Error updating video controls:", error);
+      addLog("error", "Failed to update camera settings");
+    } finally {
+      setCameraLoading(false);
+    }
+  };
+
+  // Update the brightness handler
+  const handleBrightnessChange = async (value: number[]) => {
+    const newBrightness = value[0]
+    setBrightness(newBrightness)
+    await handleVideoControls({ brightness: newBrightness })
+  }
+
+  // Update the exposure handler
+  const handleExposureChange = async (value: number[]) => {
+    const newExposure = value[0]
+    setExposure(newExposure)
+    await handleVideoControls({ exposure: newExposure })
+  }
+
+  // Update the resolution selection component
+  const ResolutionSelect = () => {
+    const currentCamera = availableCameras.find(c => c.device_id === selectedCamera)
+    const resolutions = currentCamera?.supported_resolutions || {}
+
+    const handleResolutionChange = async (newResolution: string) => {
+      try {
+        setResolution(newResolution);
+        // Reset fps to first available option for new resolution
+        const newFps = Object.keys(resolutions)[0] || "30";
+        setFps(newFps);
+         setSelectedFps(parseInt(newFps));
+         await detectionApi.capture({
+           device: selectedCamera,
+           resolution: newResolution,
+           fps: parseInt(newFps),
+           brightness,
+           exposure,
+           flip_vertical: flipVertical,
+           zoom
+         });
+      } catch (err) {
+         console.error("Error changing resolution:", err);
+      }
+    };
+
+    const handleFpsChange = async (newFps: string) => {
+      try {
+         setFps(newFps);
+         setSelectedFps(parseInt(newFps));
+         await detectionApi.capture({
+           device: selectedCamera,
+           resolution,
+           fps: parseInt(newFps),
+           brightness,
+           exposure,
+           flip_vertical: flipVertical,
+           zoom
+         });
+      } catch (err) {
+         console.error("Error changing fps:", err);
+      }
+    };
+
+    return (
+      <div className="space-y-2 w-full">
+        <Label htmlFor="resolution" className="text-sm font-medium text-white">Resolution</Label>
+        <Select 
+          value={`${selectedResolution}@${selectedFps}fps`} 
+          onValueChange={async (value) => {
+            try {
+               setCameraLoading(true)
+               const [res, fps] = value.split('@')
+               setSelectedResolution(res)
+               setSelectedFps(parseInt(fps))
+               await handleResolutionChange(res)
+            } catch (error) {
+               console.error("Error changing resolution:", error)
+               addLog("error", "Failed to change resolution")
+            } finally {
+               setCameraLoading(false)
+            }
+          }}
+          disabled={cameraLoading || !currentCamera}
+        >
+          <SelectTrigger id="resolution" className="w-full h-9 bg-[#1a1a1a] border-[#333] text-white">
+            <SelectValue placeholder="Select resolution" />
+          </SelectTrigger>
+          <SelectContent className="bg-[#1a1a1a] border-[#333] text-white">
+            {Object.keys(resolutions).length === 0 ? (
+              <SelectItem value="default" disabled>No resolutions available</SelectItem>
+            ) : (
+              Object.entries(resolutions).map(([res, fpsList]) => 
+                fpsList.map(fps => (
+                  <SelectItem key={`${res}@${fps}`} value={`${res}@${fps}`} className="text-white">
+                    {res} @ {fps}fps
+                  </SelectItem>
+                ))
+              )
+            )}
+          </SelectContent>
+        </Select>
+      </div>
+    )
+  }
+
+  const handleCameraChange = (newCamera: string) => {
+    setSelectedCamera(newCamera);
+    // Reset to first available resolution and fps
+    const currentCamera = availableCameras.find(c => c.device_id === newCamera);
+    const resolutions = currentCamera?.supported_resolutions || {};
+    const firstResolution = Object.keys(resolutions)[0] || "1280x720";
+    setSelectedResolution(firstResolution);
+    
+    // Update settings
+    handleVideoControls({
+      device: newCamera,
+      resolution: firstResolution,
+      fps: selectedFps,
+      brightness: currentCamera?.brightness || 50,
+      exposure: currentCamera?.exposure || 50,
+      flip_vertical: false,
+      zoom: 1
+    });
+  };
+
+  // Update camera selection component
+  const CameraSelect = () => (
+    <div className="space-y-2 w-full">
+      <Label htmlFor="camera" className="text-sm font-medium text-white">Camera</Label>
+      <Select
+        value={selectedCamera}
+        onValueChange={handleCameraChange}
+        disabled={cameraLoading}
+      >
+        <SelectTrigger id="camera" className="w-full h-9 bg-[#1a1a1a] border-[#333] text-white">
+          <SelectValue placeholder="Select camera" />
+        </SelectTrigger>
+        <SelectContent className="bg-[#1a1a1a] border-[#333] text-white">
+          {availableCameras.length === 0 ? (
+            <SelectItem value="default" disabled>No cameras found</SelectItem>
+          ) : (
+            availableCameras.map((camera) => (
+              <SelectItem key={camera.device_id} value={camera.device_id} className="text-white">
+                {camera.name} ({camera.camera_type})
+              </SelectItem>
+            ))
+          )}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+
   return (
     <div className="h-screen flex flex-col bg-[#0a0a0a] overflow-hidden">
+      <LoadingDialog />
+      {/* Add a semi-transparent overlay when backend is initializing */}
+      {isBackendInitializing && (
+        <div className="fixed inset-0 bg-black/50 z-40" />
+      )}
+      
       {/* Top section with video and map */}
       <div className="flex flex-col lg:flex-row h-auto flex-grow overflow-hidden">
         {/* Video Stream Panel */}
@@ -281,36 +717,28 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="h-[calc(100%-40px)] bg-[#1a1a1a] flex items-center justify-center relative">
-            {/* Flip Vertical Button */}
-            <Button
-              variant="ghost"
-              size="sm"
-              className={`absolute top-2 right-2 h-7 w-7 p-0 rounded-full ${flipVertical ? "bg-[#050e39]/20" : "bg-[#1a1a1a]/50 hover:bg-[#1a1a1a]/70"}`}
-              onClick={toggleFlipVertical}
-              title="Flip Vertical"
-            >
-              <FlipVertical className="h-4 w-4 text-white" />
-            </Button>
-
-            {!isPlaying && (
+            {!isPlaying ? (
               <div className="text-center">
                 <Camera className="w-16 h-16 text-white/30 mx-auto mb-2" />
-                <p className="text-white/50 text-sm">Press Start Detection to begin</p>
+                <p className="text-white/50 text-sm">Press Start Live Feed to begin</p>
+            <Button
+                  variant="outline"
+                  className="mt-4 bg-[#050e39] hover:bg-[#0a1a5a] text-white"
+                  onClick={() => setIsPlaying(true)}
+                >
+                  <Play className="h-4 w-4 mr-2" />
+                  Start Live Feed
+            </Button>
               </div>
-            )}
-            {isPlaying && detectionActive && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="border-2 border-[#050e39] w-20 h-20 rounded-lg flex items-center justify-center">
-                  <span className="text-[#050e39] text-xs">DETECTING</span>
-                </div>
-              </div>
-            )}
-
-            {/* Apply flip vertical transformation when active */}
-            {flipVertical && (
-              <div className="absolute inset-0 bg-[#050e39]/10 flex items-center justify-center pointer-events-none">
-                <span className="text-[#050e39] text-xs font-bold">FLIPPED</span>
-              </div>
+            ) : (
+              <img
+                ref={imgRef}
+                className="max-w-full max-h-full object-contain"
+                style={{
+                  transform: flipVertical ? 'scaleY(-1)' : 'none'
+                }}
+                alt="Live video stream"
+              />
             )}
           </div>
         </div>
@@ -339,63 +767,73 @@ export default function Dashboard() {
       </div>
 
       {/* Controls Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-2 lg:gap-0 mt-2 flex-shrink-0">
+      <div className={`grid grid-cols-1 lg:grid-cols-3 gap-2 lg:gap-0 mt-2 flex-shrink-0 ${isBackendInitializing ? 'pointer-events-none opacity-50' : ''}`}>
         {/* Video Control Panel */}
         <div className="border-r border-[#222] flex flex-col bg-[#0a0a0a]">
           <div className="h-8 bg-[#0a0a0a] flex items-center px-4 border-b border-[#222]">
             <span className="text-base text-white">Video Controls</span>
           </div>
           <div className="p-4 flex-1 flex flex-col justify-between">
-            <div className="grid grid-cols-2 gap-2">
-              <Select value={cameraDevice} onValueChange={setCameraDevice}>
-                <SelectTrigger className="h-9 text-sm bg-[#1a1a1a] border-[#333]">
-                  <SelectValue placeholder="Select camera" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default">Default Camera</SelectItem>
-                  <SelectItem value="usb">USB Camera</SelectItem>
-                  <SelectItem value="ip">IP Camera</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Select value={resolution} onValueChange={setResolution}>
-                <SelectTrigger className="h-9 text-sm bg-[#1a1a1a] border-[#333]">
-                  <SelectValue placeholder="Resolution" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="480p">480p</SelectItem>
-                  <SelectItem value="720p">720p (30fps)</SelectItem>
-                  <SelectItem value="1080p">1080p</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-4 p-2">
+              <CameraSelect />
+              <ResolutionSelect />
             </div>
 
-            <div className="space-y-2 mt-4">
+            <div className="space-y-4 mt-4">
+              <div className="flex justify-between items-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={`h-8 px-2 ${flipVertical ? 'bg-[#050e39] text-white' : 'bg-[#1a1a1a] text-white'}`}
+                  onClick={toggleFlipVertical}
+                >
+                  <FlipVertical className="h-4 w-4 mr-1" />
+                  Flip Vertical
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-white">Zoom</span>
+                  <span className="text-sm text-white">{Math.round(zoom * 100)}%</span>
+                </div>
+                <Slider
+                  value={[zoom]}
+                  onValueChange={handleZoomChange}
+                  min={0.1}
+                  max={5.0}
+                  step={0.1}
+                  className="py-1"
+                />
+              </div>
+
+              <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <span className="text-sm text-white">Brightness</span>
                 <span className="text-sm text-white">{brightness}%</span>
               </div>
               <Slider
                 value={[brightness]}
-                onValueChange={(value) => setBrightness(value[0])}
+                  onValueChange={handleBrightnessChange}
                 max={100}
                 step={1}
                 className="py-1"
               />
             </div>
 
-            <div className="space-y-2 mt-4">
+              <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <span className="text-sm text-white">Exposure</span>
                 <span className="text-sm text-white">{exposure}%</span>
               </div>
               <Slider
                 value={[exposure]}
-                onValueChange={(value) => setExposure(value[0])}
+                  onValueChange={handleExposureChange}
                 max={100}
                 step={1}
                 className="py-1"
               />
+              </div>
             </div>
           </div>
         </div>
@@ -505,10 +943,10 @@ export default function Dashboard() {
       </div>
 
       {/* Status Bar with Console Logs */}
-      <div className="h-10 bg-[#0a0a0a] border-t border-[#222] flex items-center px-4 mt-2 flex-shrink-0">
+      <div className={`h-10 bg-[#0a0a0a] border-t border-[#222] flex items-center px-4 mt-2 flex-shrink-0 ${isBackendInitializing ? 'pointer-events-none opacity-50' : ''}`}>
         {/* System Stats */}
         <div className="flex items-center space-x-4 text-base text-white">
-          <span>{formatTime()}</span>
+          <span>{mounted ? formatTime() : "--:--:--"}</span>
           <span>CPU: {cpuUsage}%</span>
           <span>GPU: {gpuUsage}%</span>
           <span>FPS: {currentFps}</span>
@@ -730,6 +1168,16 @@ export default function Dashboard() {
               </Tabs>
             </CardContent>
           </Card>
+        </div>
+      )}
+
+      {/* Add loading indicator */}
+      {cameraLoading && (
+        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-[#1a1a1a] p-4 rounded-lg flex flex-col items-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mb-2"></div>
+            <span className="text-white">Updating camera settings...</span>
+          </div>
         </div>
       )}
     </div>
