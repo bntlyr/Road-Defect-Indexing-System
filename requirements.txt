@@ -28,9 +28,6 @@ numpy==1.26.4
 onnx==1.17.0
 opencv-contrib-python==4.11.0.86
 opencv-python==4.11.0.86
-openvino==2024.6.0
-openvino-dev==2024.6.0
-openvino-telemetry==2025.1.0
 osmium==4.0.2
 packaging==25.0
 pandas==2.2.3
