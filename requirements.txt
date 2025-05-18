@@ -64,13 +64,9 @@ shapely==2.0.7
 six==1.17.0
 sympy==1.13.1
 thop==0.1.1.post2209072238
-torch==2.5.1+cu121
-torchaudio==2.5.1+cu121
-torchvision==0.20.1+cu121
 tqdm==4.67.1
 typing_extensions==4.13.2
 tzdata==2025.2
-ultralytics @ file://./src/app/models/yolov10
 urllib3==2.4.0
 xyzservices==2025.4.0
 zipp==3.21.0
