@@ -1,0 +1,16 @@
+{
+    "GPSLocation": null,
+    "SeverityLevel": 0.8157703993055555,
+    "RealWorldArea": 0.2876839285714286,
+    "DefectPixelCount": 375907,
+    "TotalPixelCount": 921600,
+    "DistanceToObject": 1.0,
+    "ImageShape": [
+        720,
+        1280,
+        3
+    ],
+    "ProcessingTimestamp": "2025-05-22T02:03:35.107788",
+    "FuzzySeverity": 0.9091492669244612,
+    "RepairProbability": 1
+}

@@ -7,9 +7,7 @@ import numpy as np
 from tqdm import tqdm  # Import tqdm for progress bar
 import atexit  # Import atexit for cleanup
 import logging
-from ultralytics import YOLOv10 as YOLO
 import os
-from src.app.modules.detection import DefectDetector  # Import DefectDetector
 import threading
 from PyQt5.QtCore import pyqtSignal, QThread, QObject
 from src.app.modules.settings_manager import SettingsManager
@@ -249,6 +247,8 @@ class Camera(QObject):
     def initialize_detector(self, model_path):
         """Initialize detector using DefectDetector"""
         try:
+            # Import DefectDetector here to avoid circular import at module level
+            from src.app.modules.detection import DefectDetector
             self.detector = DefectDetector(model_path)
             logging.info("DefectDetector initialized successfully")
         except Exception as e:

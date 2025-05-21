@@ -11,7 +11,8 @@ import threading
 import queue
 import piexif
 from piexif.helper import UserComment
-from src.app.modules.gps_reader import GPSReader  # Import the GPSReader class
+from src.app.modules.gps_reader import GPSReader
+from src.app.modules.camera import Camera
 
 # Set up logging for error reporting and debugging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -228,7 +229,7 @@ class DefectDetector:
         self.save_thread.join()
 
 if __name__ == "__main__":
-    model_path = r"C:\Users\bentl\Desktop\FINAL\REFACTOR\RDI-Python\src\app\models\road_defect.pt"
+    model_path = r"./src/app/models/road_defect.pt"
     detector = DefectDetector(model_path)
 
     # Use the Camera class to get frames

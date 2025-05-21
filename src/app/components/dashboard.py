@@ -13,6 +13,7 @@ from src.app.modules.camera import Camera
 from src.app.modules.gps_reader import GPSReader
 from src.app.modules.detection import DefectDetector
 from src.app.modules.map_view import MapView
+from src.app.modules.cloud_connector import CloudStorage
 import time
 import os
 import threading
@@ -351,6 +352,10 @@ class Dashboard(QMainWindow):
         self.detecting = False
         logging.info("Initializing Dashboard")
 
+        # Cloud storage state
+        self.cloud_storage = None
+        self.cloud_connected = False
+
         # Initialize all UI controls first
         self.initialize_controls()
         self.initialize_buttons()
@@ -539,6 +544,145 @@ class Dashboard(QMainWindow):
             }
         """)
         self.settings_button.clicked.connect(self.show_settings)
+
+        # Upload Data button
+        self.upload_button = QPushButton("Upload Data")
+        self.upload_button.setObjectName("upload_button")
+        self.upload_button.setStyleSheet("""
+            #upload_button {
+                background-color: #f4b942;
+                color: #222;
+                font-weight: bold;
+                padding: 12px;
+                border-radius: 6px;
+                border: 2px solid #c4902f;
+            }
+            #upload_button:hover {
+                background-color: #e1a53a;
+                border-color: #b07d22;
+            }
+            #upload_button:pressed {
+                background-color: #b07d22;
+                border-color: #8a5f18;
+            }
+        """)
+        self.upload_button.clicked.connect(self.handle_upload_data)
+
+        # Connect Cloud button
+        self.connect_cloud_button = QPushButton("Connect Cloud")
+        self.connect_cloud_button.setObjectName("connect_cloud_button")
+        self.connect_cloud_button.setStyleSheet("""
+            #connect_cloud_button {
+                background-color: #7ec0ee;
+                color: #222;
+                font-weight: bold;
+                padding: 12px;
+                border-radius: 6px;
+                border: 2px solid #4a90e2;
+            }
+            #connect_cloud_button:hover {
+                background-color: #5dade2;
+                border-color: #357abd;
+            }
+            #connect_cloud_button:pressed {
+                background-color: #357abd;
+                border-color: #2a5f94;
+            }
+        """)
+        self.connect_cloud_button.clicked.connect(self.handle_connect_cloud)
+
+        # Send Data button
+        self.send_data_button = QPushButton("Send Data")
+        self.send_data_button.setObjectName("send_data_button")
+        self.send_data_button.setStyleSheet("""
+            #send_data_button {
+                background-color: #f7ca18;
+                color: #222;
+                font-weight: bold;
+                padding: 12px;
+                border-radius: 6px;
+                border: 2px solid #b7950b;
+            }
+            #send_data_button:hover {
+                background-color: #f4d03f;
+                border-color: #b7950b;
+            }
+            #send_data_button:pressed {
+                background-color: #b7950b;
+                border-color: #7d6608;
+            }
+        """)
+        self.send_data_button.clicked.connect(self.handle_send_data)
+
+    def handle_upload_data(self):
+        """Call the upload data callback if provided, else run pipeline if cloud is connected."""
+        if self.upload_data_callback:
+            self.upload_data_callback(self)
+        elif hasattr(self, "cloud_storage") and self.cloud_storage and self.cloud_storage.is_initialized:
+            # Run the pipeline from trial.py
+            from src.app.modules.trial import run_pipeline
+            image_path = "test_images/detection_20250507_110722.png"  # Or get from UI
+            save_path = "output/processed_road.png"
+            camera_matrix = np.array([[1000, 0, 640],
+                                      [0, 1000, 360],
+                                      [0, 0, 1]], dtype=np.float32)
+            distortion_coeffs = np.zeros(5)
+            run_pipeline(image_path, save_path, camera_matrix, distortion_coeffs, cloud=self.cloud_storage, calculator=self.camera.detector.severity_calculator if hasattr(self.camera, "detector") and hasattr(self.camera.detector, "severity_calculator") else None)
+        else:
+            QMessageBox.warning(self, "Upload", "No cloud connection or upload callback configured.")
+
+    def handle_connect_cloud(self):
+        """Initialize cloud connection"""
+        try:
+            self.cloud_storage = CloudStorage()
+            if self.cloud_storage.is_initialized:
+                self.cloud_connected = True
+                QMessageBox.information(self, "Cloud", "Connected to cloud successfully.")
+            else:
+                self.cloud_connected = False
+                QMessageBox.warning(self, "Cloud", "Failed to connect to cloud. Check credentials and settings.")
+        except Exception as e:
+            self.cloud_connected = False
+            QMessageBox.critical(self, "Cloud", f"Error connecting to cloud: {str(e)}")
+
+    def handle_send_data(self):
+        """Send current frame and dummy data to cloud"""
+        if not self.cloud_connected or not self.cloud_storage:
+            QMessageBox.warning(self, "Cloud", "Cloud not connected. Please connect first.")
+            return
+        try:
+            # Try to get current frame from camera
+            frame = None
+            defect_counts = {}
+            frame_counts = {}
+            if self.camera and hasattr(self.camera, "capture"):
+                ret, frame = self.camera.capture.read()
+                if not ret or frame is None:
+                    QMessageBox.warning(self, "Send Data", "No frame available to send.")
+                    return
+                # Convert frame to JPEG bytes
+                _, jpeg_bytes = cv2.imencode('.jpg', frame)
+                image_bytes = jpeg_bytes.tobytes()
+            else:
+                QMessageBox.warning(self, "Send Data", "Camera not initialized.")
+                return
+
+            # Dummy defect/frame counts (replace with real data if available)
+            defect_counts = {"Linear-Crack": 1, "Alligator-Crack": 2, "Pothole": 0}
+            frame_counts = {"total": 1}
+
+            # Upload to cloud
+            success = self.cloud_storage.upload_detection(
+                image=jpeg_bytes,  # Pass numpy array as in CloudStorage
+                defect_counts=defect_counts,
+                frame_counts=frame_counts
+            )
+            if success:
+                QMessageBox.information(self, "Send Data", "Data sent to cloud successfully.")
+            else:
+                QMessageBox.warning(self, "Send Data", "Failed to send data to cloud.")
+        except Exception as e:
+            QMessageBox.critical(self, "Send Data", f"Error sending data: {str(e)}")
 
     def setup_ui(self):
         """Setup the main UI layout"""
@@ -1017,6 +1161,8 @@ class Dashboard(QMainWindow):
         main_layout.addWidget(self.connect_gps_button)
         main_layout.addWidget(self.run_analysis_button)
         main_layout.addWidget(self.settings_button)
+        main_layout.addWidget(self.connect_cloud_button)  # Add connect cloud button
+        main_layout.addWidget(self.send_data_button)      # Add send data button
         main_group.setLayout(main_layout)
 
         layout.addWidget(video_group, stretch=1)
