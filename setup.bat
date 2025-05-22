@@ -76,6 +76,6 @@ echo.
 echo To start the application:
 echo 1. Run 'start.bat' or
 echo 2. Activate the virtual environment: venv\Scripts\activate
-echo 3. Run: python src/app/main.py
+echo 3. Run: python -m src.app.main
 echo.
 pause
