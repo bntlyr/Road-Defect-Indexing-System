@@ -4,7 +4,7 @@ A comprehensive system for detecting, analyzing, and indexing road defects using
 
 ## Features
 
-- Real-time road defect detection using YOLO
+- Real-time road defect detection using YOLOv10
 - Multiple defect type detection:
   - Linear Cracks
   - Alligator Cracks
