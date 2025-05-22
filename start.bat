@@ -19,7 +19,7 @@ if errorlevel 1 (
 )
 
 :: Start the application
-python src/app/main.py
+python -m src.app.main
 if errorlevel 1 (
     echo Application failed to start!
     pause
