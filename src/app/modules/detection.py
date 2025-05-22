@@ -106,7 +106,7 @@ class DefectDetector:
                 "Total Defect Count": metadata.get("Total Defect Count", 0),
                 "Average Severity Area": metadata.get("Average Severity Area", 0.0),
                 "Defects": metadata.get("Defects", []),
-                "Location": metadata["Location"]  # Ensure this uses the updated Location
+                "Location": metadata.get("Location", (0.0, 0.0))  # Ensure this uses the updated Location
             }
             comment_str = json.dumps(defect_report)
             encoded_comment = b"ASCII\0\0\0" + comment_str.encode('utf-8')
