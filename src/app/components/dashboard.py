@@ -86,13 +86,15 @@ class CameraThread(QThread):
             time.sleep(1/30)  # Limit to ~30 FPS
 
     def toggle_flip(self):
-        """Toggle vertical flip state with debounce"""
+        """Toggle both vertical and horizontal flip states with debounce."""
         current_time = time.time()
         if current_time - self._last_flip_time > 0.5:  # 500ms debounce
             self._last_flip_time = current_time
             self._flip_vertical = not self._flip_vertical
-            self.flip_state_changed.emit(self._flip_vertical)
-            logging.info(f"Flip toggled to: {'flipped' if self._flip_vertical else 'normal'}")
+            self._flip_horizontal = not self._flip_horizontal
+            self.flip_state_changed.emit((self._flip_vertical, self._flip_horizontal))
+            logging.info(f"Flip toggled to: vertical={'on' if self._flip_vertical else 'off'}, "
+                         f"horizontal={'on' if self._flip_horizontal else 'off'}")
 
     def stop(self):
         self.running = False
