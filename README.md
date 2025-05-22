@@ -116,7 +116,7 @@ Road-Defect-Indexing-System/
 1. Ensure all dependencies are installed and the model is in place
 2. Run the main application:
 ```bash
-python src/app/main.py
+python -m src.app.main
 ```
 
 ### Using the Dashboard
