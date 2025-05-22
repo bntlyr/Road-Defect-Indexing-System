@@ -1,6 +1,6 @@
 # Road Defect Indexing System
 
-A comprehensive system for detecting, analyzing, and indexing road defects using computer vision and fuzzy logic. This system provides real-time detection of road defects through a camera feed, processes the defects using advanced image processing techniques, and calculates severity using fuzzy logic.
+A comprehensive system for detecting, analyzing, and indexing road defects using computer vision, fuzzy logic and Random Forest. This system provides real-time detection of road defects through a camera feed, processes the defects using advanced image processing techniques, and calculates severity using fuzzy logic.
 
 ## Features
 
@@ -13,8 +13,8 @@ A comprehensive system for detecting, analyzing, and indexing road defects using
 - Fuzzy logic-based severity calculation
 - GPS integration for defect location tracking
 - Cloud storage integration
-- Real-time visualization dashboard
-- Defect statistics and analysis
+- Real-time visualization dashboard 
+- Defect statistics and Predictive Analysis using Random Forest 
 - Camera controls (zoom, brightness, exposure)
 - Support for multiple camera inputs
 
@@ -171,6 +171,7 @@ The system can be configured through the Settings dialog:
    - Crack enhancement
    - Noise reduction
    - Morphological operations
+   - Super Pixel Segementation
 
 ### Severity Calculation
 Uses fuzzy logic to calculate defect severity based on:
@@ -187,7 +188,7 @@ Uses fuzzy logic to calculate defect severity based on:
 
 ### Cloud Storage
 - Supports cloud storage integration
-- Real-time data transmission
+- Efficient Data transmission
 - Defect metadata storage
 - Image backup
 
