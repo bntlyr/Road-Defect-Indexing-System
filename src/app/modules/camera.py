@@ -209,24 +209,28 @@ class Camera(QObject):
         self.settings_manager.update_setting('zoom_factor', self.zoom_factor)
 
     def set_brightness(self, brightness):
-        """Sets the brightness for the camera."""
-        self.brightness = max(0, min(100, brightness))
-        success = self.capture.set(cv2.CAP_PROP_BRIGHTNESS, self.brightness)
-        if success:
-            logging.debug(f"Camera brightness set to: {self.brightness}")
-            self.settings_manager.update_setting('brightness', self.brightness)
-        else:
-            logging.error("Failed to set camera brightness.")
+        """Try to set camera brightness with better range support."""
+        # Try 0–1 scale as fallback
+        for scale in [1.0, 255.0, 100.0]:
+            value = brightness / scale
+            if self.capture.set(cv2.CAP_PROP_BRIGHTNESS, value):
+                actual = self.capture.get(cv2.CAP_PROP_BRIGHTNESS)
+                logging.debug(f"Brightness set to {value} (actual: {actual})")
+                self.settings_manager.update_setting('brightness', value)
+                return
+        logging.error("Failed to set camera brightness.")
 
     def set_exposure(self, exposure):
-        """Sets the exposure for the camera."""
-        self.exposure = max(0, min(100, exposure))
-        success = self.capture.set(cv2.CAP_PROP_EXPOSURE, self.exposure)
-        if success:
-            logging.debug(f"Camera exposure set to: {self.exposure}")
-            self.settings_manager.update_setting('exposure', self.exposure)
-        else:
-            logging.error("Failed to set camera exposure.")
+        """Try to set camera exposure with better range support."""
+        for scale in [1.0, 255.0, 100.0]:
+            value = exposure / scale
+            if self.capture.set(cv2.CAP_PROP_EXPOSURE, value):
+                actual = self.capture.get(cv2.CAP_PROP_EXPOSURE)
+                logging.debug(f"Exposure set to {value} (actual: {actual})")
+                self.settings_manager.update_setting('exposure', value)
+                return
+        logging.error("Failed to set camera exposure.")
+
 
     def start_stream(self):
         """Starts the video stream."""
