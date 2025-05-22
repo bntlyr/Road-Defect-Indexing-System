@@ -34,7 +34,7 @@ class DefectDetector:
         self.class_names = ['Linear-Crack', 'Alligator-Crack', 'Pothole']
         
         # Set default save directory and confidence threshold
-        self.save_dir = save_dir or os.path.join(os.path.expanduser("~"), "RoadDefectDetections")
+        self.save_dir = save_dir or os.path.join(os.path.expanduser("~"), "RDI-Detections")  # Match settings manager default
         os.makedirs(self.save_dir, exist_ok=True)
         self.confidence_threshold = 0.25  # Default value
         
@@ -66,16 +66,56 @@ class DefectDetector:
                 self.save_queue.task_done()
             except Exception as e:
                 logging.error(f"Error in save worker: {e}")
+
     @staticmethod
     def _convert_to_exif_gps(coord):
         """Convert decimal GPS coordinate into EXIF (deg, min, sec) rational format."""
-        degrees = int(coord)
-        minutes_float = abs((coord - degrees) * 60)
-        minutes = int(minutes_float)
-        seconds = int((minutes_float - minutes) * 60 * 10000)
+        try:
+            degrees = int(coord)
+            minutes_float = abs((coord - degrees) * 60)
+            minutes = int(minutes_float)
+            seconds = int((minutes_float - minutes) * 60 * 10000)
+            
+            # Validate the conversion
+            if not (0 <= minutes < 60 and 0 <= seconds < 600000):
+                raise ValueError(f"Invalid minutes/seconds: {minutes}, {seconds}")
+                
+            return ((abs(degrees), 1), (minutes, 1), (seconds, 10000))
+        except Exception as e:
+            logging.error(f"Error converting GPS coordinate {coord}: {e}")
+            raise
 
-        return ((abs(degrees), 1), (minutes, 1), (seconds, 10000))
-
+    def _verify_exif_gps(self, exif_dict):
+        """Verify that GPS data was properly added to EXIF dictionary."""
+        try:
+            if 'GPS' not in exif_dict:
+                return False
+                
+            required_tags = [
+                piexif.GPSIFD.GPSLatitudeRef,
+                piexif.GPSIFD.GPSLatitude,
+                piexif.GPSIFD.GPSLongitudeRef,
+                piexif.GPSIFD.GPSLongitude
+            ]
+            
+            for tag in required_tags:
+                if tag not in exif_dict['GPS']:
+                    logging.error(f"Missing required GPS tag: {tag}")
+                    return False
+                    
+            # Verify latitude/longitude values are in correct format
+            lat = exif_dict['GPS'][piexif.GPSIFD.GPSLatitude]
+            lon = exif_dict['GPS'][piexif.GPSIFD.GPSLongitude]
+            
+            if not (isinstance(lat, tuple) and len(lat) == 3 and
+                    isinstance(lon, tuple) and len(lon) == 3):
+                logging.error("Invalid GPS coordinate format in EXIF")
+                return False
+                
+            return True
+        except Exception as e:
+            logging.error(f"Error verifying EXIF GPS data: {e}")
+            return False
 
     def _save_detection(self, frame, metadata):
         """Internal method to save detection (called by worker thread)"""
@@ -88,39 +128,85 @@ class DefectDetector:
             rgb_frame = cv2.cvtColor(original_frame, cv2.COLOR_BGR2RGB)
             pil_image = Image.fromarray(rgb_frame)
 
+            # Get fresh GPS data
+            lat, lon = self.gps_reader.get_gps_data()
+            logging.info(f"Retrieved GPS data for EXIF: {lat}, {lon}")
+            
             # Prepare EXIF dictionary
             exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
 
-            # Add GPS data if available
-            lat, lon = metadata.get("Location", (None, None))
+            # Add GPS data if available and valid
+            gps_data_added = False
             if lat is not None and lon is not None:
-                exif_dict['GPS'][piexif.GPSIFD.GPSLatitudeRef] = 'N' if lat >= 0 else 'S'
-                exif_dict['GPS'][piexif.GPSIFD.GPSLatitude] = DefectDetector._convert_to_exif_gps(lat)
-                exif_dict['GPS'][piexif.GPSIFD.GPSLongitudeRef] = 'E' if lon >= 0 else 'W'
-                exif_dict['GPS'][piexif.GPSIFD.GPSLongitude] = DefectDetector._convert_to_exif_gps(lon)
+                try:
+                    # Validate coordinates
+                    if -90 <= lat <= 90 and -180 <= lon <= 180:
+                        # Convert coordinates to EXIF format
+                        lat_exif = self._convert_to_exif_gps(abs(lat))
+                        lon_exif = self._convert_to_exif_gps(abs(lon))
+                        
+                        # Add GPS data to EXIF
+                        exif_dict['GPS'][piexif.GPSIFD.GPSLatitudeRef] = 'N' if lat >= 0 else 'S'
+                        exif_dict['GPS'][piexif.GPSIFD.GPSLatitude] = lat_exif
+                        exif_dict['GPS'][piexif.GPSIFD.GPSLongitudeRef] = 'E' if lon >= 0 else 'W'
+                        exif_dict['GPS'][piexif.GPSIFD.GPSLongitude] = lon_exif
+                        exif_dict['GPS'][piexif.GPSIFD.GPSVersionID] = (2, 3, 0, 0)
+                        exif_dict['GPS'][piexif.GPSIFD.GPSStatus] = 'A'  # Active
+                        exif_dict['GPS'][piexif.GPSIFD.GPSMeasureMode] = '3'  # 3D
+                        
+                        # Verify GPS data was added correctly
+                        if self._verify_exif_gps(exif_dict):
+                            gps_data_added = True
+                            logging.info(f"Successfully added GPS data to EXIF: {lat}, {lon}")
+                        else:
+                            logging.error("GPS data verification failed")
+                    else:
+                        logging.warning(f"Invalid GPS coordinates: {lat}, {lon}")
+                except Exception as e:
+                    logging.error(f"Error adding GPS data to EXIF: {e}")
             else:
-                logging.info("No valid GPS data found. Saving without GPS data.")
+                logging.warning("No valid GPS data available for EXIF")
 
             # Add defect data as JSON UserComment
             defect_report = {
                 "Total Defect Count": metadata.get("Total Defect Count", 0),
                 "Average Severity Area": metadata.get("Average Severity Area", 0.0),
                 "Defects": metadata.get("Defects", []),
-                "Location": metadata.get("Location", (0.0, 0.0))  # Ensure this uses the updated Location
+                "Location": (lat, lon) if gps_data_added else (None, None)
             }
-            comment_str = json.dumps(defect_report)
-            encoded_comment = b"ASCII\0\0\0" + comment_str.encode('utf-8')
-            exif_dict['Exif'][piexif.ExifIFD.UserComment] = encoded_comment
+            
+            try:
+                comment_str = json.dumps(defect_report)
+                encoded_comment = b"ASCII\0\0\0" + comment_str.encode('utf-8')
+                exif_dict['Exif'][piexif.ExifIFD.UserComment] = encoded_comment
+            except Exception as e:
+                logging.error(f"Error encoding defect report: {e}")
 
-            # Insert EXIF and save
-            exif_bytes = piexif.dump(exif_dict)
-            pil_image.save(image_path, "jpeg", exif=exif_bytes)
-            logging.info(f"Image saved successfully: {image_path}")
+            try:
+                # Insert EXIF and save
+                exif_bytes = piexif.dump(exif_dict)
+                pil_image.save(image_path, "jpeg", exif=exif_bytes)
+                
+                # Verify the saved image has EXIF data
+                try:
+                    with Image.open(image_path) as saved_img:
+                        if 'exif' in saved_img.info:
+                            logging.info(f"Image saved successfully with EXIF data: {image_path}")
+                            if gps_data_added:
+                                logging.info("GPS data verified in saved image")
+                        else:
+                            logging.warning(f"Image saved but EXIF data not found: {image_path}")
+                except Exception as e:
+                    logging.error(f"Error verifying saved image EXIF: {e}")
+                    
+            except Exception as e:
+                logging.error(f"Error saving image with EXIF: {e}")
+                # Fallback to saving without EXIF
+                pil_image.save(image_path, "jpeg")
+                logging.info(f"Image saved without EXIF data: {image_path}")
 
         except Exception as e:
-            logging.error(f"Error saving detection: {e}")
-
-
+            logging.error(f"Error in save_detection: {e}")
 
     def detect(self, frame):
         """Perform live inference on a frame"""
@@ -146,34 +232,22 @@ class DefectDetector:
             # Convert results to CPU for faster processing
             boxes = results[0].boxes.cpu()
             
+            # Get fresh GPS data
+            lat, lon = self.gps_reader.get_gps_data()
+            
             # Initialize metadata structure
             metadata = {
                 "Total Defect Count": len(boxes),
                 "Average Severity Area": 0,
                 "Defects": [],
-                "Location": (0.0, 0.0)  # Default coordinates as a tuple
+                "Location": (lat, lon) if lat is not None and lon is not None else (None, None)
             }
             
-            # Update GPS coordinates if available
-            gps_data = self.gps_reader.read_gps_data()  # Get GPS data
-            logging.info(f"GPS data retrieved: {gps_data}")  # Log the GPS data
-
-            if gps_data != (None, None):  # Check if gps_data is not (None, None)
-                logging.info(f"GPS DATA: {gps_data}")  # Log types
-                
-                try:
-                    # Convert GPS data to floats
-                    lat, lon = map(float, gps_data)
-                    metadata["Location"] = (lat, lon)  # Update metadata with float values
-                except (ValueError, TypeError) as e:
-                    logging.warning(f"Invalid GPS data: {e}. Setting default coordinates.")
-                    metadata["Location"] = (0.0, 0.0)  # Default coordinates
+            # Log GPS status
+            if lat is not None and lon is not None:
+                logging.info(f"Using GPS coordinates: {lat}, {lon}")
             else:
-                logging.warning("No valid GPS data found.")
-                metadata["Location"] = (0.0, 0.0)  # Default coordinates
-
-            # Log the metadata before processing boxes
-            logging.info(f"Initial metadata: {metadata}")
+                logging.warning("No valid GPS coordinates available")
 
             # Process all boxes at once for better performance
             for i, box in enumerate(boxes):
@@ -214,9 +288,6 @@ class DefectDetector:
                             (x1, y1 - 5),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             
-            # Log the final metadata after processing boxes
-            logging.info(f"Final metadata: {metadata}")
-
             # Queue the save operation with the original frame
             self.save_queue.put((frame, metadata))
         

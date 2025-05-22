@@ -12,7 +12,6 @@ from PyQt5.QtGui import QPainter, QPen, QColor, QFont, QImage, QPixmap
 from src.app.modules.camera import Camera
 from src.app.modules.gps_reader import GPSReader
 from src.app.modules.detection import DefectDetector
-from src.app.modules.map_view import MapView
 from src.app.modules.cloud_connector import CloudStorage
 import time
 import os
@@ -417,16 +416,17 @@ class Dashboard(QMainWindow):
         # Camera selection combo box
         self.camera_combo = QComboBox()
         
-        # Flip button
-        self.flip_button = QPushButton("Flip Vertical")
-        self.flip_button.clicked.connect(self.toggle_flip)
+        # Flip button - starts in normal state
+        self.flip_button = QPushButton("Flip Camera")
+        self.flip_button.clicked.connect(self._handle_flip_click)
         
         # Zoom controls
         self.zoom_label = QLabel("Zoom: 1.00x")
         self.zoom_slider = QSlider(Qt.Horizontal)
-        self.zoom_slider.setMinimum(10)  # 0.1x zoom
+        self.zoom_slider.setMinimum(100)  # Start at 1.0x zoom
         self.zoom_slider.setMaximum(500)  # 5.0x zoom max
         self.zoom_slider.setValue(100)  # default 1.0x
+        self.zoom_slider.setTracking(False)  # Only update when slider is released
         
         # Brightness controls
         self.brightness_label = QLabel("Brightness: 50")
@@ -434,6 +434,8 @@ class Dashboard(QMainWindow):
         self.brightness_slider.setMinimum(0)
         self.brightness_slider.setMaximum(100)
         self.brightness_slider.setValue(50)
+        self.brightness_slider.setTracking(False)  # Only update when slider is released
+        self.brightness_slider.setEnabled(False)  # Initially disabled until we check camera support
         
         # Exposure controls
         self.exposure_label = QLabel("Exposure: 50")
@@ -441,6 +443,52 @@ class Dashboard(QMainWindow):
         self.exposure_slider.setMinimum(0)
         self.exposure_slider.setMaximum(100)
         self.exposure_slider.setValue(50)
+        self.exposure_slider.setTracking(False)  # Only update when slider is released
+        self.exposure_slider.setEnabled(False)  # Initially disabled until we check camera support
+
+    def _handle_flip_click(self):
+        """Handle flip button click with debounce"""
+        if not hasattr(self, '_last_flip_time'):
+            self._last_flip_time = 0
+        
+        current_time = time.time()
+        if current_time - self._last_flip_time < 0.5:  # 500ms debounce
+            return
+            
+        self._last_flip_time = current_time
+        
+        # Toggle flip state
+        is_flipped = self.camera.toggle_flip()
+        
+        # Update button appearance based on flip state
+        if is_flipped:
+            self.flip_button.setText("Normal View")
+            self.flip_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #dc3545;
+                    color: white;
+                    border: none;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #c82333;
+                }
+            """)
+        else:
+            self.flip_button.setText("Flip Camera")
+            self.flip_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #6c757d;
+                    color: white;
+                    border: none;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #5a6268;
+                }
+            """)
 
     def initialize_statistics(self):
         """Initialize statistics widgets"""
@@ -773,7 +821,25 @@ class Dashboard(QMainWindow):
         self.update_detect_button_style()
 
     def setup_connections(self):
-        """Setup all signal connections"""
+        """Set up signal connections"""
+        # Connect flip button
+        self.flip_button.clicked.connect(self._handle_flip_click)
+        
+        # Set initial flip button state
+        self.flip_button.setText("Flip Camera")
+        self.flip_button.setStyleSheet("""
+            QPushButton {
+                background-color: #6c757d;
+                color: white;
+                border: none;
+                padding: 5px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #5a6268;
+            }
+        """)
+
         # Camera connections
         if self.camera:
             available_cameras = self.camera.get_available_cameras()
@@ -781,11 +847,40 @@ class Dashboard(QMainWindow):
             self.camera_combo.addItems([f"Camera {i}" for i in available_cameras])
             self.camera_combo.currentIndexChanged.connect(self.change_camera)
 
+            # Check camera capabilities and update UI accordingly
+            self._update_camera_controls()
+
         # Control connections
         self.zoom_slider.valueChanged.connect(self.update_zoom)
         self.brightness_slider.valueChanged.connect(self.update_brightness)
         self.exposure_slider.valueChanged.connect(self.update_exposure)
-        self.flip_button.clicked.connect(self.toggle_flip)
+
+    def _update_camera_controls(self):
+        """Update camera control UI based on camera capabilities"""
+        if not self.camera:
+            return
+
+        # Check brightness support
+        if hasattr(self.camera, 'supports_brightness') and self.camera.supports_brightness:
+            self.brightness_slider.setEnabled(True)
+            self.brightness_slider.setValue(self.camera.brightness)
+            self.brightness_label.setText(f"Brightness: {self.camera.brightness}")
+            self.brightness_label.setStyleSheet("color: #f0f0f0;")
+        else:
+            self.brightness_slider.setEnabled(False)
+            self.brightness_label.setText("Brightness: Not Supported")
+            self.brightness_label.setStyleSheet("color: #666666;")
+
+        # Check exposure support
+        if hasattr(self.camera, 'supports_exposure') and self.camera.supports_exposure:
+            self.exposure_slider.setEnabled(True)
+            self.exposure_slider.setValue(self.camera.exposure)
+            self.exposure_label.setText(f"Exposure: {self.camera.exposure}")
+            self.exposure_label.setStyleSheet("color: #f0f0f0;")
+        else:
+            self.exposure_slider.setEnabled(False)
+            self.exposure_label.setText("Exposure: Not Supported")
+            self.exposure_label.setStyleSheet("color: #666666;")
 
     def change_camera(self, index):
         """Change camera with blocking dialog"""
@@ -809,22 +904,30 @@ class Dashboard(QMainWindow):
             self.camera_thread.frame_ready.connect(self.update_frame)
             self.camera_thread.detection_ready.connect(self.update_detection)
             self.camera_thread.error_occurred.connect(self.handle_camera_error)
-            self.camera_thread.flip_state_changed.connect(self.update_flip_button)
             
-            # Set initial camera settings
-            self.camera.brightness = 50
-            self.camera.exposure = 50
+            # Update camera controls based on new camera capabilities
+            self._update_camera_controls()
+            
+            # Set flip button state
+            self.flip_button.setText("Flip Camera")
+            self.flip_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #6c757d;
+                    color: white;
+                    border: none;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #5a6268;
+                }
+            """)
             
             self.start_camera()
             dialog.accept()
         except Exception as e:
             dialog.close()
             QMessageBox.critical(self, "Camera Error", f"Failed to switch camera: {str(e)}")
-
-    def toggle_flip(self):
-        """Toggle vertical flip"""
-        if self.camera_thread:
-            self.camera_thread.toggle_flip()  # This now has debounce protection
 
     def update_frame(self, frame):
         """Update the video display with a regular frame"""
@@ -1041,23 +1144,34 @@ class Dashboard(QMainWindow):
     def update_zoom(self, value):
         """Update zoom setting"""
         if self.camera:
-            self.camera.set_zoom(value / 100)
-            self.zoom_label.setText(f"Zoom: {value/100:.2f}x")
-            logging.debug(f"Zoom updated to: {value/100:.2f}x")
+            zoom_factor = value / 100.0  # Convert slider value to zoom factor (100 = 1.0x)
+            self.camera.set_zoom(zoom_factor)
+            self.zoom_label.setText(f"Zoom: {zoom_factor:.2f}x")
+            logging.info(f"Zoom updated to: {zoom_factor:.2f}x")
 
     def update_brightness(self, value):
         """Update brightness setting"""
         if self.camera:
-            self.camera.set_brightness(value)
-            self.brightness_label.setText(f"Brightness: {value}")
-            logging.debug(f"Brightness updated to: {value}")
+            success = self.camera.set_brightness(value)
+            if success:
+                self.brightness_label.setText(f"Brightness: {value}")
+                logging.info(f"Brightness updated to: {value}")
+            else:
+                logging.warning(f"Failed to update brightness to: {value}")
+                # Reset slider to last successful value
+                self.brightness_slider.setValue(self.camera.brightness)
 
     def update_exposure(self, value):
         """Update exposure setting"""
         if self.camera:
-            self.camera.set_exposure(value)
-            self.exposure_label.setText(f"Exposure: {value}")
-            logging.debug(f"Exposure updated to: {value}")
+            success = self.camera.set_exposure(value)
+            if success:
+                self.exposure_label.setText(f"Exposure: {value}")
+                logging.info(f"Exposure updated to: {value}")
+            else:
+                logging.warning(f"Failed to update exposure to: {value}")
+                # Reset slider to last successful value
+                self.exposure_slider.setValue(self.camera.exposure)
 
     def update_defect_stats(self, linear, alligator, potholes):
         # Update the defect counts and redraw donuts
@@ -1122,6 +1236,21 @@ class Dashboard(QMainWindow):
         exposure_layout.addWidget(self.exposure_label)
         video_layout.addLayout(exposure_layout)
 
+        # Add disabled slider styles
+        video_group.setStyleSheet("""
+            QSlider:disabled {
+                background: #2b2b2b;
+            }
+            QSlider::groove:disabled {
+                background: #3b3b3b;
+                border: 1px solid #555;
+            }
+            QSlider::handle:disabled {
+                background: #555;
+                border: 1px solid #666;
+            }
+        """)
+
         video_group.setLayout(video_layout)
 
         # Statistics with Donut Chart and GPS Frames
@@ -1174,9 +1303,48 @@ class Dashboard(QMainWindow):
         return layout
 
     def update_flip_button(self, is_flipped):
-        """Update flip button text based on state"""
-        self.flip_button.setText("Normal View" if is_flipped else "Flip Vertical")
-        logging.info(f"Flip button updated to: {'Normal View' if is_flipped else 'Flip Vertical'}")
+        """Update flip button text and style based on state"""
+        try:
+            # Block signals temporarily to prevent multiple updates
+            self.flip_button.blockSignals(True)
+            
+            # Update button state
+            self.flip_button.setChecked(is_flipped)
+            self.flip_button.setText("Normal View" if is_flipped else "Flip Camera")
+            
+            # Update button style
+            if is_flipped:
+                self.flip_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #6c757d;
+                        color: white;
+                        border: none;
+                        padding: 5px;
+                        border-radius: 3px;
+                    }
+                    QPushButton:hover {
+                        background-color: #5a6268;
+                    }
+                """)
+            else:
+                self.flip_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #6c757d;
+                        color: white;
+                        border: none;
+                        padding: 5px;
+                        border-radius: 3px;
+                    }
+                    QPushButton:hover {
+                        background-color: #5a6268;
+                    }
+                """)
+            
+            logging.info(f"Flip button UI updated - {'Normal View' if is_flipped else 'Flip Camera'}")
+            
+        finally:
+            # Re-enable signals
+            self.flip_button.blockSignals(False)
 
     def update_cpu_gpu(self):
         # Update CPU usage
