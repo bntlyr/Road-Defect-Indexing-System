@@ -422,10 +422,10 @@ class Dashboard(QMainWindow):
         # Construct the model path dynamically
         if getattr(sys, 'frozen', False):
             # If the application is frozen (running as an executable)
-            model_path = os.path.join(sys._MEIPASS, 'models', 'road_defect.pt')
+            model_path = os.path.join(sys._MEIPASS, 'models', 'road_defect_v2.pt')
         else:
             # If running in a normal Python environment
-            model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'road_defect.pt')
+            model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'road_defect_v2.pt')
 
         logging.info(f"Model path: {model_path}")
 
