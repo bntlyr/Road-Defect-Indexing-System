@@ -11,6 +11,10 @@ import os
 import threading
 from PyQt5.QtCore import pyqtSignal, QThread, QObject
 from src.app.modules.settings_manager import SettingsManager
+from collections import deque
+
+# Import DefectDetector here to avoid circular imports
+from src.app.modules.detection import DefectDetector
 
 try:
     import comtypes
@@ -73,7 +77,7 @@ class Camera(QObject):
     detection_ready = pyqtSignal(np.ndarray, dict, int)  # Define the detection_ready signal
     settings_changed = pyqtSignal(float, str)  # Signal for settings changes (confidence, save_dir)
 
-    def __init__(self, camera_index=None, model_path=None):
+    def __init__(self, camera_index=None, model_path=None, gps_reader=None):
         super(Camera, self).__init__()  # Call the parent constructor
         
         # Initialize settings manager
@@ -133,14 +137,9 @@ class Camera(QObject):
         self.confidence_threshold = settings.get('confidence_threshold', 0.25)
         self.save_dir = settings.get('save_dir', os.path.join(os.path.expanduser("~"), "RDI-Detections"))
         
-        # Initialize detector if model path is provided
-        if model_path:
-            try:
-                self.initialize_detector(model_path)
-                logging.info(f"Detector initialized successfully with model: {model_path}")
-            except Exception as e:
-                logging.error(f"Failed to initialize detector: {str(e)}")
-                raise
+        # Initialize detector with GPS reader
+        self.detector = DefectDetector(model_path=model_path, gps_reader=gps_reader)
+        logging.info("DefectDetector initialized with GPS reader")
         
         # Initialize frame queue for communication between threads
         self.frame_queue = queue.Queue(maxsize=10)
@@ -447,17 +446,6 @@ class Camera(QObject):
                 break
 
         self.cleanup()  # Clean up resources
-
-    def initialize_detector(self, model_path):
-        """Initialize detector using DefectDetector"""
-        try:
-            # Import DefectDetector here to avoid circular import at module level
-            from src.app.modules.detection import DefectDetector
-            self.detector = DefectDetector(model_path)
-            logging.info("DefectDetector initialized successfully")
-        except Exception as e:
-            logging.error(f"Failed to initialize DefectDetector: {str(e)}")
-            raise
 
     def preprocess_image(self, frame):
         """Preprocess image for detection"""

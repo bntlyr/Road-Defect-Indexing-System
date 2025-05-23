@@ -1,113 +1,165 @@
 import serial
 import serial.tools.list_ports
 import pynmea2
-import threading
-import time
 import logging
 
 BAUDRATE = 9600
-UPDATE_INTERVAL = 1.0  # Update GPS data every second
 
 class GPSReader:
     def __init__(self):
+        # Initialize logger first
+        self.logger = logging.getLogger(__name__)
+        # Then initialize other attributes
         self.port = None
         self.latitude = None
         self.longitude = None
-        self.last_update = 0
-        self.is_running = False
-        self.gps_thread = None
-        self.lock = threading.Lock()
+        self.serial = None  # Add serial connection attribute
         
-        # Start GPS reading in background
-        self.start_gps_reading()
+        # Try COM3 first since we know GPS is always there
+        if self._try_connect_port('COM3'):
+            self.logger.info("Connected to GPS on COM3")
+        else:
+            # If COM3 fails, scan other ports
+            self.port = self.find_gps_port()
+            if self.port:
+                self._connect()
+
+    def _try_connect_port(self, port):
+        """Try to connect to a specific port and verify it's a GPS device"""
+        try:
+            with serial.Serial(port, BAUDRATE, timeout=1) as ser:
+                # Try to read a few lines to verify it's a GPS
+                for _ in range(5):  # Reduced number of attempts for faster response
+                    line = ser.readline().decode('ascii', errors='replace').strip()
+                    if line.startswith('$GPGGA') or line.startswith('$GPRMC'):
+                        self.port = port
+                        return True
+        except Exception as e:
+            self.logger.debug(f"Failed to connect to {port}: {e}")
+        return False
 
     def find_gps_port(self):
         """Scan and return the first port that receives valid GPS NMEA data."""
-        logging.info("Scanning serial ports for GPS device...")
+        self.logger.info("Scanning serial ports for GPS device...")
         ports = serial.tools.list_ports.comports()
-
+        
+        # Sort ports to prioritize COM3
+        ports = sorted(ports, key=lambda x: 0 if x.device == 'COM3' else 1)
+        
         for port in ports:
-            try:
-                with serial.Serial(port.device, BAUDRATE, timeout=1) as ser:
-                    # Try to read multiple lines to ensure stable connection
-                    valid_lines = 0
-                    for _ in range(20):  # Try more lines for better reliability
-                        line = ser.readline().decode('ascii', errors='replace').strip()
-                        if line.startswith('$GPGGA') or line.startswith('$GPRMC'):
-                            valid_lines += 1
-                            if valid_lines >= 3:  # Require at least 3 valid lines
-                                logging.info(f"GPS device found on {port.device}")
-                                return port.device
-            except Exception as e:
-                logging.debug(f"Failed to connect to {port.device}: {e}")
-                continue
+            if self._try_connect_port(port.device):
+                self.logger.info(f"GPS device found on {port.device}")
+                return port.device
 
-        logging.warning("GPS device not found.")
+        self.logger.warning("GPS device not found.")
         return None
 
-    def _gps_reading_thread(self):
-        """Background thread for continuous GPS reading."""
-        while self.is_running:
-            if not self.port:
-                self.port = self.find_gps_port()
-                if not self.port:
-                    time.sleep(5)  # Wait before retrying
-                    continue
+    def _connect(self):
+        """Establish a persistent connection to the GPS device"""
+        try:
+            if self.serial is not None:
+                try:
+                    self.serial.close()
+                except:
+                    pass
+                self.serial = None
+            
+            # Try to connect with a shorter timeout
+            self.serial = serial.Serial(self.port, BAUDRATE, timeout=0.5)
+            # Verify we can read data
+            line = self.serial.readline().decode('ascii', errors='replace').strip()
+            if line.startswith('$GPGGA') or line.startswith('$GPRMC'):
+                self.logger.info(f"Connected to GPS on {self.port}")
+                return True
+            else:
+                self.serial.close()
+                self.serial = None
+                return False
+        except Exception as e:
+            self.logger.error(f"Failed to connect to GPS: {e}")
+            self.serial = None
+            return False
 
-            try:
-                with serial.Serial(self.port, BAUDRATE, timeout=1) as ser:
-                    while self.is_running:
-                        line = ser.readline().decode('ascii', errors='replace').strip()
-                        if line.startswith('$GPGGA') or line.startswith('$GPRMC'):
-                            try:
-                                msg = pynmea2.parse(line)
-                                if hasattr(msg, 'latitude') and hasattr(msg, 'longitude'):
-                                    with self.lock:
-                                        self.latitude = msg.latitude
-                                        self.longitude = msg.longitude
-                                        self.last_update = time.time()
-                                        logging.debug(f"GPS Update: {self.latitude}, {self.longitude}")
-                            except pynmea2.ParseError as e:
-                                logging.debug(f"Parse error: {e}")
-            except serial.SerialException as e:
-                logging.error(f"Serial error: {e}")
-                self.port = None  # Reset port to trigger reconnection
-                time.sleep(5)  # Wait before retrying
+    def read_gps_data(self):
+        """Read GPS data and update latitude and longitude."""
+        if not self.port:
+            return None, None
 
-    def start_gps_reading(self):
-        """Start the GPS reading thread."""
-        if not self.is_running:
-            self.is_running = True
-            self.gps_thread = threading.Thread(target=self._gps_reading_thread, daemon=True)
-            self.gps_thread.start()
+        try:
+            # Ensure connection is active
+            if self.serial is None or not self.serial.is_open:
+                if not self._connect():
+                    return None, None
 
-    def stop_gps_reading(self):
-        """Stop the GPS reading thread."""
-        self.is_running = False
-        if self.gps_thread:
-            self.gps_thread.join()
+            # Read data from the persistent connection
+            line = self.serial.readline().decode('ascii', errors='replace').strip()
+            if line.startswith('$GPGGA') or line.startswith('$GPRMC'):
+                try:
+                    msg = pynmea2.parse(line)
+                    if hasattr(msg, 'latitude') and hasattr(msg, 'longitude'):
+                        self.latitude = msg.latitude
+                        self.longitude = msg.longitude
+                        return self.latitude, self.longitude
+                except pynmea2.ParseError as e:
+                    self.logger.error(f"Parse error: {e}")
+        except serial.SerialException as e:
+            self.logger.error(f"Serial error: {e}")
+            self.serial = None  # Reset connection on error
+        return None, None
 
     def get_gps_data(self):
-        """Get the latest GPS data with validation."""
-        with self.lock:
-            # Check if GPS data is stale (older than 5 seconds)
-            if time.time() - self.last_update > 5:
-                logging.warning("GPS data is stale")
-                return None, None
-            return self.latitude, self.longitude
+        """Alias for read_gps_data to maintain compatibility."""
+        return self.read_gps_data()
 
-    def __del__(self):
-        """Cleanup when object is destroyed."""
-        self.stop_gps_reading()
+    def is_connected(self):
+        """Check if GPS is connected."""
+        return self.port is not None and self.serial is not None and self.serial.is_open
+
+    def get_available_ports(self):
+        """Get list of available serial ports."""
+        return [port.device for port in serial.tools.list_ports.comports()]
+
+    def connect_manually(self, port):
+        """Manually connect to a specific port."""
+        try:
+            # Test the port first
+            with serial.Serial(port, BAUDRATE, timeout=1) as ser:
+                for _ in range(10):
+                    line = ser.readline().decode('ascii', errors='replace').strip()
+                    if line.startswith('$GPGGA') or line.startswith('$GPRMC'):
+                        self.port = port
+                        return self._connect()  # Use persistent connection
+        except Exception as e:
+            self.logger.error(f"Failed to connect to port {port}: {e}")
+        return False
+
+    def cleanup(self):
+        """Clean up the serial connection"""
+        if self.serial is not None:
+            try:
+                self.serial.close()
+            except:
+                pass
+            self.serial = None
+        self.port = None
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    # Set up logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    # Create and test GPS reader
     gps_reader = GPSReader()
-    try:
-        while True:
-            lat, lon = gps_reader.get_gps_data()
-            if lat is not None and lon is not None:
-                print(f"GPS: {lat}, {lon}")
-            time.sleep(1)
-    except KeyboardInterrupt:
-        gps_reader.stop_gps_reading()
+    port = gps_reader.find_gps_port()
+    
+    if port:
+        print(f"GPS found on port: {port}")
+        print("Reading GPS data (press Ctrl+C to stop)...")
+        try:
+            while True:
+                lat, lon = gps_reader.read_gps_data()
+                if lat is not None and lon is not None:
+                    print(f"Location: {lat}, {lon}")
+        except KeyboardInterrupt:
+            print("\nGPS reading stopped.")
+    else:
+        print("No GPS device found. Available ports:", gps_reader.get_available_ports())

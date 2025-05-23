@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QLabel, QVBoxLayout, QHBoxLayout,
     QWidget, QComboBox, QPushButton, QSlider, QGroupBox,
     QStatusBar, QSplitter, QFrame, QMessageBox, QDialog,
-    QFileDialog, QFormLayout, QDoubleSpinBox, QLineEdit
+    QFileDialog, QFormLayout, QDoubleSpinBox, QLineEdit, QInputDialog
 )
 from PyQt5.QtCore import Qt, QSize, QRect, QTimer, pyqtSignal, QThread
 from PyQt5.QtGui import QPainter, QPen, QColor, QFont, QImage, QPixmap
@@ -107,24 +107,74 @@ class GPSThread(QThread):
         super().__init__()
         self.gps = GPSReader()
         self.running = False
+        self.last_update = 0
+        self.update_interval = 1.0  # Update every second
+        self.connection_attempts = 0
+        self.max_connection_attempts = 3
 
     def run(self):
+        """Start GPS reading"""
         self.running = True
+        self.status_update.emit("Searching for GPS...")
+        
         while self.running:
             try:
-                if self.gps.find_gps_port():
-                    lat, lon = self.gps.read_gps_data()
+                if not self.gps.is_connected():
+                    if self.connection_attempts < self.max_connection_attempts:
+                        # Try to reconnect
+                        if self.gps.port and self.gps._connect():
+                            self.status_update.emit(f"Connected to GPS on {self.gps.port}")
+                            self.connection_attempts = 0
+                        else:
+                            self.connection_attempts += 1
+                            self.status_update.emit(f"No GPS device found (Attempt {self.connection_attempts}/{self.max_connection_attempts})")
+                            time.sleep(2)  # Wait before retrying
+                            continue
+                    else:
+                        self.status_update.emit("GPS connection failed after multiple attempts")
+                        time.sleep(5)  # Longer wait after max attempts
+                        self.connection_attempts = 0
+                        continue
+                
+                # Read GPS data
+                lat, lon = self.gps.get_gps_data()
+                if lat is not None and lon is not None:
                     self.gps_update.emit(lat, lon)
-                    self.status_update.emit("Connected")
+                    self.status_update.emit("GPS Fix")
+                    self.connection_attempts = 0  # Reset attempts on successful read
                 else:
-                    self.status_update.emit("Disconnected")
+                    self.status_update.emit("No Fix")
+                
+                time.sleep(self.update_interval)
+                
             except Exception as e:
                 self.status_update.emit(f"Error: {str(e)}")
-            time.sleep(1)
+                time.sleep(2)  # Wait before retrying
 
     def stop(self):
+        """Stop GPS reading"""
         self.running = False
+        if self.gps:
+            self.gps.cleanup()  # Clean up the GPS connection
         self.wait()
+
+    def is_connected(self):
+        """Check if GPS is connected"""
+        return self.gps.is_connected()
+
+    def get_available_ports(self):
+        """Get list of available GPS ports"""
+        return self.gps.get_available_ports()
+
+    def connect_manually(self, port):
+        """Manually connect to a specific GPS port"""
+        if self.gps.connect_manually(port):
+            self.connection_attempts = 0  # Reset attempts on manual connection
+            self.status_update.emit(f"Connected to GPS on {port}")
+            return True
+        else:
+            self.status_update.emit("Failed to connect to GPS")
+            return False
 
 class DonutWidget(QFrame):
     def __init__(self, title, count, parent=None):
@@ -151,10 +201,10 @@ class DonutWidget(QFrame):
 
         # Center the donut
         rect = QRect(
-            (width - 2 * outer_radius) // 2,
-            (available_height - 2 * outer_radius) // 2,
-            2 * outer_radius,
-            2 * outer_radius
+           int ((width - 2 * outer_radius) // 2),
+           int( (available_height - 2 * outer_radius) // 2),
+           int ( 2 * outer_radius),
+            int (2 * outer_radius)
         )
 
         # Draw the donut fill with a more visible color
@@ -164,10 +214,10 @@ class DonutWidget(QFrame):
 
         # Draw the hole
         hole_rect = QRect(
-            self.rect().center().x() - hole_radius,
-            rect.top() + outer_radius - hole_radius,
-            2 * hole_radius,
-            2 * hole_radius
+            int(self.rect().center().x() - hole_radius),
+            int (rect.top() + outer_radius - hole_radius),
+           int( 2 * hole_radius),
+           int ( 2 * hole_radius)
         )
         painter.setBrush(self.palette().window())
         painter.drawEllipse(hole_rect)
@@ -362,19 +412,27 @@ class Dashboard(QMainWindow):
         self.initialize_buttons()
         self.initialize_statistics()
 
+        # Initialize GPS first since detector will use it
+        logging.info("Initializing GPS thread...")
+        self.gps_thread = GPSThread()
+        self.gps_thread.gps_update.connect(self.update_gps)
+        self.gps_thread.status_update.connect(self.update_gps_status)
+        logging.info("GPS thread initialized")
+
         # Construct the model path dynamically
         if getattr(sys, 'frozen', False):
             # If the application is frozen (running as an executable)
-            model_path = os.path.join(sys._MEIPASS, 'models', 'road_defect_v2.pt')
+            model_path = os.path.join(sys._MEIPASS, 'models', 'road_defect.pt')
         else:
             # If running in a normal Python environment
-            model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'road_defect_v2.pt')
+            model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'road_defect.pt')
 
         logging.info(f"Model path: {model_path}")
 
-        # Initialize camera with model
+        # Initialize camera with model and GPS reader
         try:
-            self.camera = Camera(model_path=model_path)
+            logging.info("Initializing camera with GPS reader...")
+            self.camera = Camera(model_path=model_path, gps_reader=self.gps_thread.gps)
             self.camera_thread = CameraThread(self.camera)
             self.camera_thread.frame_ready.connect(self.update_frame)
             self.camera_thread.detection_ready.connect(self.update_detection)
@@ -387,14 +445,6 @@ class Dashboard(QMainWindow):
             self.camera = None
             self.camera_thread = None
 
-        # Initialize GPS
-        self.gps_thread = GPSThread()
-        self.gps_thread.gps_update.connect(self.update_gps)
-        self.gps_thread.status_update.connect(self.update_gps_status)
-
-        # Commenting out MapView related code
-        # self.map_view = MapView()
-
         # Setup UI and connections
         self.setup_ui()
         self.setup_connections()
@@ -405,7 +455,9 @@ class Dashboard(QMainWindow):
         self.cpu_gpu_timer.start(1000)
 
         # Start GPS thread
+        logging.info("Starting GPS thread...")
         self.gps_thread.start()  # Ensure GPS thread starts
+        logging.info("GPS thread started")
 
         # Start camera if available
         if self.camera_thread:
@@ -1027,14 +1079,30 @@ class Dashboard(QMainWindow):
                 self.start_camera()
 
     def toggle_gps(self):
-        """Toggle GPS connection and update map accordingly"""
+        """Toggle GPS connection"""
         if self.gps_thread.isRunning():
             self.gps_thread.stop()
             self.connect_gps_button.setText("Connect GPS")
-            # self.map_view.clear_defects()  # Clear defect markers when GPS disconnects
+            self.status_labels["gps"].setText("GPS: Disconnected")
         else:
-            self.gps_thread.start()
-            self.connect_gps_button.setText("Disconnect GPS")
+            # Show port selection dialog
+            ports = self.gps_thread.get_available_ports()
+            if not ports:
+                QMessageBox.warning(self, "GPS Error", "No GPS devices found")
+                return
+                
+            port, ok = QInputDialog.getItem(
+                self, "Select GPS Port", 
+                "Choose a GPS port:", 
+                ports, 0, False
+            )
+            
+            if ok and port:
+                if self.gps_thread.connect_manually(port):
+                    self.gps_thread.start()
+                    self.connect_gps_button.setText("Disconnect GPS")
+                else:
+                    QMessageBox.warning(self, "GPS Error", "Failed to connect to GPS device")
 
     def run_analysis(self):
         if not self.detecting:
@@ -1071,14 +1139,18 @@ class Dashboard(QMainWindow):
             logging.info("Settings updated successfully")
 
     def update_gps(self, lat, lon):
+        """Update GPS coordinates in the UI"""
+        logging.info(f"GPS update received - Lat: {lat}, Lon: {lon}")
         self.lat_label.setText(f"Latitude: {lat:.6f}")
         self.long_label.setText(f"Longitude: {lon:.6f}")
 
     def update_gps_status(self, status):
+        """Update GPS status in the UI"""
+        logging.info(f"GPS status update: {status}")
         self.status_labels["gps"].setText(f"GPS: {status}")  # Update GPS status in the status bar
-        if status == "Connected":
+        if status == "GPS Fix":
             self.connect_gps_button.setText("Disconnect GPS")
-        else:
+        elif status == "No Fix":
             self.connect_gps_button.setText("Connect GPS")
 
     def start_camera(self):
