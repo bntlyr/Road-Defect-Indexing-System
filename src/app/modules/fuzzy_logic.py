@@ -95,11 +95,9 @@ sev_sim = ctrl.ControlSystemSimulation(sev_ctrl)
 
 # Example defect type weights (customize as needed)
 defect_weights = {
-    'pothole': 1.2,
-    'crack': 1.0,
-    'rut': 1.1,
-    'patch': 0.9,
-    # Add more defect types and their weights as needed
+    'Pothole': 1.2,
+    'Alligator-Cracks': 1.0,
+    'Linear-Cracks': 0.9,
 }
 
 def calculate_severity_percentage(length_cm, width_cm, defect_ratio, defect_type: str) -> float:
