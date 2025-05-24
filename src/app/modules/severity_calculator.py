@@ -755,43 +755,49 @@ class SeverityCalculator:
             dominant_defect_type = max(defect_type_counts.items(), key=lambda x: x[1])[0]
             defect_type = 'crack' if 'Crack' in dominant_defect_type else 'pothole'
             
-            # Calculate fuzzy severity with all required inputs
+            # Calculate fuzzy severity using the fuzzy_logic module's main interface
             try:
-                # Ensure all required inputs are within valid ranges
-                avg_length_cm = max(0, min(100, avg_length_cm))  # Clamp to 0-100 cm
-                avg_width_cm = max(0, min(100, avg_width_cm))    # Clamp to 0-100 cm
-                defect_ratio = max(0, min(1.0, defect_ratio))    # Clamp to 0-1
-                
-                # Log input values for debugging
+                # Clamp values to valid ranges
+                avg_length_cm = max(0, min(100, avg_length_cm))
+                avg_width_cm = max(0, min(100, avg_width_cm))
+                defect_ratio = max(0, min(1.0, defect_ratio))
+
                 logger.info(f"Fuzzy logic inputs - Length: {avg_length_cm:.2f}cm, "
-                          f"Width: {avg_width_cm:.2f}cm, "
-                          f"Defect Ratio: {defect_ratio:.2f}, "
-                          f"Type: {defect_type}")
-                
-                # Calculate vehicle damage risk first
-                vdr_sim = fuzzy_logic.vdr_sim
-                vdr_sim.input['vdr_length'] = float(avg_length_cm)
-                vdr_sim.input['vdr_width'] = float(avg_width_cm)
-                vdr_sim.compute()
-                vehicle_risk = vdr_sim.output['vehicle_risk']
-                
-                # Now calculate severity with all antecedents
-                sev_sim = fuzzy_logic.sev_sim
-                sev_sim.input['vdr_length'] = float(avg_length_cm)  # Using correct antecedent names
-                sev_sim.input['vdr_width'] = float(avg_width_cm)    # Using correct antecedent names
-                sev_sim.input['defect_ratio'] = float(defect_ratio)
-                sev_sim.input['vehicle_risk_input'] = float(vehicle_risk)
-                sev_sim.input['traffic'] = 5000.0  # Default to medium traffic
-                sev_sim.compute()
-                
-                fuzzy_severity = sev_sim.output['severity'] * 100  # Convert to percentage
-                repair_probability = min(1.0, fuzzy_severity / 100.0)
+                            f"Width: {avg_width_cm:.2f}cm, "
+                            f"Defect Ratio: {defect_ratio:.2f}, "
+                            f"Type: {defect_type}")
+
+                # Use the fuzzy_logic module's main interface
+                fuzzy_result = fuzzy_logic.calculate_severity(
+                    avg_length_cm=avg_length_cm,
+                    avg_width_cm=avg_width_cm,
+                    defect_ratio=defect_ratio,
+                    defect_type=defect_type
+                )
+                fuzzy_severity = fuzzy_result.get('severity', severity_level * 100)
+                # Get traffic volume using traffic_getter with GPS coordinates
+                traffic_volume = None
+                if gps_loc is not None:
+                    try:
+                        traffic_volume = traffic_getter.get_traffic_volume(gps_loc[0], gps_loc[1])
+                        logger.info(f"Traffic volume at GPS {gps_loc}: {traffic_volume}")
+                    except Exception as e:
+                        logger.warning(f"Failed to get traffic volume: {e}")
+                else:
+                    logger.info("No GPS location available for traffic volume lookup.")
+
+                # Use random forest for repair decision (not probability)
+                repair_decision = random_forest.predict_repair_decision(
+                    traffic_volume=traffic_volume,
+                    defect_ratio=defect_ratio,
+                    severity_level=severity_level,
+                )
                 logger.info(f"Fuzzy severity calculation successful: {fuzzy_severity:.2f}%")
             except Exception as e:
                 logger.warning(f"Fuzzy logic calculation failed: {e}")
                 logger.exception("Full traceback:")
                 fuzzy_severity = severity_level * 100
-                repair_probability = min(1.0, severity_level * 1.2)
+                repair_decision = 0
             
             # Initialize defect counts
             defect_counts = {
@@ -863,7 +869,7 @@ class SeverityCalculator:
                 'ImageShape': undistorted_img.shape,
                 'ProcessingTimestamp': datetime.now().isoformat(),
                 'FuzzySeverity': fuzzy_severity,
-                'RepairProbability': repair_probability,
+                'RepairDecision': repair_decision,
                 'DefectCounts': defect_counts,
                 'AverageLength': avg_length_cm,
                 'AverageWidth': avg_width_cm,
