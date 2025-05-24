@@ -16,6 +16,7 @@ from src.app.modules import traffic_getter
 import torch
 from ultralytics import YOLOv10 as YOLO
 import sys
+import exif
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -98,56 +99,30 @@ def extract_image_metadata(image_path: str) -> Tuple[Dict, Optional[Tuple[float,
         Tuple containing (metadata_dict, gps_location, bounding_boxes)
     """
     try:
-        with Image.open(image_path) as img:
-            exif = img._getexif()
-            if not exif:
-                return {}, None, []
-                
-            metadata = {}
-            gps_location = None
-            bounding_boxes = []
+        # Load the image and extract EXIF data
+        img = exif.Image(image_path)
+        metadata = {tag: str(getattr(img, tag)) for tag in img.list_all()}
+
+        gps_location = None
+        # Extract GPS data if available
+        if img.has_exif and img.gps_latitude and img.gps_longitude:
+            lat = img.gps_latitude
+            lon = img.gps_longitude
+            lat_ref = img.gps_latitude_ref
+            lon_ref = img.gps_longitude_ref
             
-            # Extract basic EXIF data
-            for tag_id in exif:
-                tag = Image.TAGS.get(tag_id, tag_id)
-                data = exif.get(tag_id)
-                if isinstance(data, bytes):
-                    data = data.decode('utf-8', errors='replace')
-                metadata[tag] = data
-                
-            # Extract GPS data if available
-            if 34853 in exif:  # GPSInfo tag
-                gps_info = exif[34853]
-                try:
-                    lat_data = gps_info.get(2)
-                    lon_data = gps_info.get(4)
-                    lat_ref = gps_info.get(1)
-                    lon_ref = gps_info.get(3)
-                    
-                    if all([lat_data, lon_data, lat_ref, lon_ref]):
-                        lat = float(lat_data[0]) + float(lat_data[1])/60 + float(lat_data[2])/3600
-                        lon = float(lon_data[0]) + float(lon_data[1])/60 + float(lon_data[2])/3600
-                        
-                        if lat_ref == 'S': lat = -lat
-                        if lon_ref == 'W': lon = -lon
-                        
-                        gps_location = (lat, lon)
-                        logger.info(f"Extracted GPS location: {gps_location}")
-                except Exception as e:
-                    logger.warning(f"Error parsing GPS data: {e}")
+            # Convert to decimal degrees
+            latitude = lat[0] + lat[1] / 60 + lat[2] / 3600
+            longitude = lon[0] + lon[1] / 60 + lon[2] / 3600
             
-            # Extract bounding boxes if available in metadata
-            if 'XMP' in metadata:
-                try:
-                    xmp_data = json.loads(metadata['XMP'])
-                    if 'BoundingBoxes' in xmp_data:
-                        bounding_boxes = xmp_data['BoundingBoxes']
-                        logger.info(f"Extracted {len(bounding_boxes)} bounding boxes")
-                except Exception as e:
-                    logger.warning(f"Error parsing bounding boxes: {e}")
-                    
-            return metadata, gps_location, bounding_boxes
+            if lat_ref != 'N':
+                latitude = -latitude
+            if lon_ref != 'E':
+                longitude = -longitude
             
+            gps_location = (latitude, longitude)
+
+        return metadata, gps_location, []
     except Exception as e:
         logger.error(f"Error extracting metadata: {e}")
         return {}, None, []
@@ -637,6 +612,15 @@ class SeverityCalculator:
             new_camera_mtx, roi = cv2.getOptimalNewCameraMatrix(camera_matrix, distortion_coeffs, (w, h), 1, (w, h))
             undistorted_img = cv2.undistort(original_img, camera_matrix, distortion_coeffs, None, new_camera_mtx)
             
+            # Run YOLO inference on the original undistorted image
+            detections = self.detect_defects(undistorted_img, confidence_threshold)
+            logger.info(f"YOLO detected {len(detections)} defects")
+            
+            # Skip processing if no defects are detected
+            if not detections:
+                logger.warning(f"No defects detected in image: {image_path}. Skipping...")
+                return None, [], 0.0, {}
+            
             # Create enhanced crack visualization
             enhanced_cracks = self.enhance_crack_visibility(undistorted_img)
             
@@ -890,114 +874,85 @@ class SeverityCalculator:
             logger.exception("Full traceback:")
             return None, [], 0.0, {}
 
+
+def is_image_file(filename):
+    return filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff'))
+
 if __name__ == "__main__":
     # Set up logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
 
     try:
-        # Test the SeverityCalculator class
-        logger.info("Starting severity calculator test...")
-        
-        # Construct model path dynamically
+        # Input and output directories
+        input_dir = "C:/Users/bentl/Desktop/CSPROJECT/RDI-Detections"
+        output_dir = "C:/Users/bentl/Desktop/CSPROJECT/Output"
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Model path
         if getattr(sys, 'frozen', False):
-            # If the application is frozen (running as an executable)
             model_path = os.path.join(sys._MEIPASS, 'models', 'road_defect.pt')
         else:
-            # If running in a normal Python environment
             model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'road_defect.pt')
-        
+
         logger.info(f"Looking for model at: {model_path}")
         if not os.path.exists(model_path):
-            logger.error(f"Model not found at {model_path}")
             raise FileNotFoundError(f"YOLO model not found at {model_path}")
-        
-        # Use a single test image
-        test_image_path = "C:/Users/bentl/Downloads/494362023_1607146489961853_7008592921640706811_n.jpg"
-        
-        if not os.path.exists(test_image_path):
-            raise FileNotFoundError(f"Test image not found at: {test_image_path}")
-        
-        logger.info(f"Using test image: {test_image_path}")
-        
-        # Hardcoded camera calibration values
-        logger.info("Using hardcoded camera calibration data...")
+
+        # Camera calibration (hardcoded)
         camera_matrix = np.array([
-            [1000, 0, 320],  # fx, 0, cx
-            [0, 1000, 240],  # 0, fy, cy
-            [0, 0, 1]        # 0, 0, 1
+            [1000, 0, 320],
+            [0, 1000, 240],
+            [0, 0, 1]
         ])
-        distortion_coeffs = np.zeros(5)  # [k1, k2, p1, p2, k3]
-        
-        # Initialize severity calculator with model
-        logger.info("Initializing severity calculator...")
+        distortion_coeffs = np.zeros(5)
+
+        # Initialize SeverityCalculator
         calculator = SeverityCalculator(
             camera_width=1280,
             camera_height=720,
             model_path=model_path
         )
-        
         if calculator.model is None:
             raise RuntimeError("Failed to initialize YOLO model")
-        
-        # Fixed test parameters with lower confidence threshold
-        distance = 1.0  # meters
-        confidence = 0.25  # lowered confidence threshold
-        
-        # Process image
-        logger.info(f"Processing test image with distance={distance}m, confidence={confidence}...")
-        final_img, defect_pixels, defect_ratio, metadata = calculator.process_image(
-            test_image_path,
-            camera_matrix,
-            distortion_coeffs,
-            "processed_test_image.jpg",
-            distance_to_object_m=distance,
-            confidence_threshold=confidence
-        )
-        
-        if final_img is not None:
-            logger.info("Image processing completed successfully")
-            logger.info(f"Defect pixels detected: {defect_pixels}")
-            logger.info(f"Defect ratio: {defect_ratio:.4f}")
-            
-            # Verify metadata
-            logger.info("Verifying metadata...")
-            required_fields = [
-                'DefectCounts'
-            ]
-            
-            for field in required_fields:
-                if field not in metadata:
-                    logger.error(f"Missing required metadata field: {field}")
-                else:
-                    logger.info(f"- {field}: {metadata[field]}")
-            
-            # Verify detections
-            detections = metadata.get('Detections', [])
-            logger.info(f"Number of detections: {len(detections)}")
-            for i, det in enumerate(detections, 1):
-                logger.info(f"Detection {i}:")
-                logger.info(f"  - Class: {det['class']}")
-                logger.info(f"  - Confidence: {det['confidence']:.2f}")
-                logger.info(f"  - Bounding Box: {det['bbox']}")
-            
-            # Save the processed image
-            cv2.imwrite("processed_test_image.jpg", final_img)
-            logger.info("Saved processed image to: processed_test_image.jpg")
-            
-            # Display results
-            cv2.imshow("Processed Test Image", final_img)
-            logger.info("\nPress any key to close the image window...")
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
-        else:
-            logger.error("Failed to process test image")
-        
-        logger.info("Test completed!")
-        
-    except Exception as e:
-        logger.error(f"Test failed with error: {str(e)}")
-        logger.exception("Full traceback:")
-        raise
-    
 
+        # Parameters
+        distance = 1.0
+        confidence = 0.25
+
+        logger.info("Beginning batch image processing...")
+
+        # Loop through input directory
+        for filename in os.listdir(input_dir):
+            if not is_image_file(filename):
+                continue
+
+            input_path = os.path.join(input_dir, filename)
+            output_path = os.path.join(output_dir, f"processed_{filename}")
+
+            try:
+                logger.info(f"Processing: {filename}")
+                final_img, defect_pixels, defect_ratio, metadata = calculator.process_image(
+                    input_path,
+                    camera_matrix,
+                    distortion_coeffs,
+                    output_path,
+                    distance_to_object_m=distance,
+                    confidence_threshold=confidence
+                )
+
+                if final_img is not None:
+                    cv2.imwrite(output_path, final_img)
+                    logger.info(f"Saved: {output_path}")
+                    logger.info(f" - Defect pixels: {defect_pixels}")
+                    logger.info(f" - Defect ratio: {defect_ratio:.4f}")
+                else:
+                    logger.warning(f"Failed to process image: {filename}")
+
+            except Exception as e:
+                logger.error(f"Error processing {filename}: {str(e)}")
+
+        logger.info("Batch processing completed.")
+
+    except Exception as e:
+        logger.error(f"Script failed: {str(e)}")
