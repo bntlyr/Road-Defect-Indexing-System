@@ -17,6 +17,8 @@ import torch
 from ultralytics import YOLOv10 as YOLO
 import sys
 import exif
+from src.app.modules.fuzzy_logic import calculate_severity_percentage
+from src.app.modules.random_forest import predict_repair_probability, MODEL_AVAILABLE
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -126,6 +128,7 @@ def extract_image_metadata(image_path: str) -> Tuple[Dict, Optional[Tuple[float,
     except Exception as e:
         logger.error(f"Error extracting metadata: {e}")
         return {}, None, []
+
 
 def apply_pinhole_camera_model(image: np.ndarray, camera_matrix: np.ndarray, 
                              distortion_coeffs: np.ndarray) -> np.ndarray:
@@ -252,7 +255,7 @@ class SeverityCalculator:
         else:
             logger.warning("No YOLO model path provided")
 
-    def detect_defects(self, image: np.ndarray, confidence_threshold: float = 0.15) -> List[Dict]:
+    def detect_defects(self, image: np.ndarray, confidence_threshold: float = 0.20) -> List[Dict]:
         """
         Detect defects in the image using YOLO model.
         
@@ -335,20 +338,22 @@ class SeverityCalculator:
 
     def calculate_defect_area(self, 
                             image_roi_bgr: np.ndarray,
-                            bbox_relative_to_roi: Tuple[int, int, int, int] = (0,0,-1,-1)
-                            ) -> Tuple[int, int]:
+                            bbox_relative_to_roi: Tuple[int, int, int, int] = (0,0,-1,-1),
+                            full_image_size: Optional[Tuple[int, int]] = None
+                            ) -> Tuple[int, int, float]:
         """
-        Calculate defect area within the provided image ROI.
+        Calculate defect area within the provided image ROI, relative to the full image size.
         
         Args:
             image_roi_bgr: Input image in BGR format
             bbox_relative_to_roi: Bounding box coordinates (x1,y1,x2,y2)
+            full_image_size: Optional tuple of (width, height) of the full image
             
         Returns:
-            Tuple of (defect_area_pixels, total_processed_area_pixels)
+            Tuple of (defect_area_pixels, total_processed_area_pixels, relative_area_ratio)
         """
         if image_roi_bgr is None or image_roi_bgr.size == 0:
-            return 0, 0
+            return 0, 0, 0.0
 
         # Convert to grayscale if needed
         if len(image_roi_bgr.shape) == 3:
@@ -364,7 +369,7 @@ class SeverityCalculator:
             gray_roi_processed = gray_roi.copy()
 
         if gray_roi_processed.size == 0:
-            return 0, 0
+            return 0, 0, 0.0
 
         # Apply thresholding and noise reduction
         var_mask = self._apply_variance_thresholding(gray_roi_processed)
@@ -375,8 +380,14 @@ class SeverityCalculator:
         
         defect_area_pixels = np.sum(clean_mask == 255)
         total_processed_area_pixels = gray_roi_processed.size
+
+        # Calculate relative area ratio if full image size is provided
+        relative_area_ratio = 0.0
+        if full_image_size is not None:
+            full_image_area = full_image_size[0] * full_image_size[1]
+            relative_area_ratio = defect_area_pixels / full_image_area if full_image_area > 0 else 0.0
         
-        return defect_area_pixels, total_processed_area_pixels
+        return defect_area_pixels, total_processed_area_pixels, relative_area_ratio
 
     def _apply_variance_thresholding(self, gray_roi: np.ndarray, 
                                    var_thresh_val: int = 12) -> np.ndarray:  # Reduced threshold
@@ -472,7 +483,7 @@ class SeverityCalculator:
                          distance_to_object_m: float = 1.0
                          ) -> Tuple[float, float, float, float, float, float]:
         """
-        Calculate severity metrics for detected defects and prepare inputs for fuzzy logic.
+        Calculate severity metrics for detected defects relative to the whole image.
         
         Args:
             image: Input image
@@ -483,7 +494,7 @@ class SeverityCalculator:
             Tuple of (severity_level, real_world_area_m2, total_bbox_area, 
                      avg_length_cm, avg_width_cm, defect_ratio)
         """
-        if not detections:
+        if not detections or image is None:
             return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         
         total_defect_pixels = 0
@@ -492,9 +503,12 @@ class SeverityCalculator:
         total_width_cm = 0.0
         detection_count = 0
 
-        # Get total pixel count of the image for defect ratio
-        total_image_pixels = image.shape[0] * image.shape[1] if image is not None else 1
+        # Get full image dimensions
+        full_image_height, full_image_width = image.shape[:2]
+        full_image_size = (full_image_width, full_image_height)
+        total_image_pixels = full_image_width * full_image_height
 
+        # Process each detection
         for detection in detections:
             x1, y1, x2, y2 = detection['bbox']
             w, h = x2 - x1, y2 - y1
@@ -503,21 +517,34 @@ class SeverityCalculator:
                 continue
                 
             # Ensure ROI coordinates are within bounds
-            img_h, img_w = image.shape[:2]
             roi_x1, roi_y1 = max(0, x1), max(0, y1)
-            roi_x2, roi_y2 = min(img_w, x2), min(img_h, y2)
+            roi_x2, roi_y2 = min(full_image_width, x2), min(full_image_height, y2)
             
             if roi_x2 <= roi_x1 or roi_y2 <= roi_y1:
                 continue
                 
+            # Extract ROI for processing
             current_roi = image[roi_y1:roi_y2, roi_x1:roi_x2]
-            defect_pixels, roi_pixels = self.calculate_defect_area(current_roi)
+            bbox_relative = (0, 0, roi_x2 - roi_x1, roi_y2 - roi_y1)
+            
+            # Calculate defect area relative to full image
+            defect_pixels, roi_pixels, relative_area = self.calculate_defect_area(
+                current_roi, 
+                bbox_relative,
+                full_image_size
+            )
             
             # Calculate real-world dimensions using camera parameters
             if self.focal_length > 0:
                 # Convert pixel dimensions to real-world measurements (in cm)
+                # Use the relative area to scale the measurements
                 length_cm = (w * self.pixel_size_x * distance_to_object_m * 100) / self.focal_length
                 width_cm = (h * self.pixel_size_y * distance_to_object_m * 100) / self.focal_length
+                
+                # Scale measurements based on relative area
+                length_cm *= np.sqrt(relative_area) if relative_area > 0 else 1.0
+                width_cm *= np.sqrt(relative_area) if relative_area > 0 else 1.0
+                
                 total_length_cm += length_cm
                 total_width_cm += width_cm
                 detection_count += 1
@@ -529,9 +556,16 @@ class SeverityCalculator:
         avg_length_cm = total_length_cm / detection_count if detection_count > 0 else 0.0
         avg_width_cm = total_width_cm / detection_count if detection_count > 0 else 0.0
         
-        # Calculate severity metrics
-        defect_ratio = total_defect_pixels / total_bbox_pixels if total_bbox_pixels > 0 else 0.0
-        real_world_area = self.calculate_real_world_size(total_defect_pixels, distance_to_object_m)
+        # Calculate severity metrics relative to full image
+        defect_ratio = total_defect_pixels / total_image_pixels if total_image_pixels > 0 else 0.0
+        
+        # Calculate real-world area using the total defect pixels relative to full image
+        real_world_area = self.calculate_real_world_size(
+            int(total_defect_pixels * (total_image_pixels / total_bbox_pixels if total_bbox_pixels > 0 else 1.0)),
+            distance_to_object_m
+        )
+        
+        # Calculate severity level based on defect ratio relative to full image
         severity_level = min(1.0, defect_ratio * 2.0)
         
         return severity_level, real_world_area, total_bbox_pixels, avg_length_cm, avg_width_cm, defect_ratio
@@ -720,7 +754,11 @@ class SeverityCalculator:
                 )
                 
                 # Calculate defect area for this detection
-                defect_pixels, roi_pixels = self.calculate_defect_area(undistorted_img[y1:y2, x1:x2])
+                defect_pixels, roi_pixels, relative_area = self.calculate_defect_area(
+                    undistorted_img[y1:y2, x1:x2],
+                    (0, 0, x2 - x1, y2 - y1),
+                    (w, h)
+                )
                 total_defect_pixels += defect_pixels
                 total_bbox_pixels += roi_pixels
             
@@ -751,31 +789,38 @@ class SeverityCalculator:
                             f"Defect Ratio: {defect_ratio:.2f}, "
                             f"Type: {defect_type}")
 
-                # Use the fuzzy_logic module's main interface
-                fuzzy_result = fuzzy_logic.calculate_severity(
-                    avg_length_cm=avg_length_cm,
-                    avg_width_cm=avg_width_cm,
+                # Use the correct function name and parameters
+                fuzzy_severity = calculate_severity_percentage(
+                    length_cm=avg_length_cm,
+                    width_cm=avg_width_cm,
                     defect_ratio=defect_ratio,
-                    defect_type=defect_type
+                    defect_type=dominant_defect_type  # Use the actual defect type name
                 )
-                fuzzy_severity = fuzzy_result.get('severity', severity_level * 100)
-                # Get traffic volume using traffic_getter with GPS coordinates
-                traffic_volume = None
-                if gps_loc is not None:
-                    try:
-                        traffic_volume = traffic_getter.get_traffic_volume(gps_loc[0], gps_loc[1])
-                        logger.info(f"Traffic volume at GPS {gps_loc}: {traffic_volume}")
-                    except Exception as e:
-                        logger.warning(f"Failed to get traffic volume: {e}")
-                else:
-                    logger.info("No GPS location available for traffic volume lookup.")
+                
+                # Calculate repair decision using random forest
+                try:
+                    # Get traffic volume (use default if not available)
+                    traffic_volume = 5000.0  # Default medium traffic
+                    
+                    # Use random forest model with fuzzy severity as input
+                    repair_decision = predict_repair_probability(
+                        road_volume=traffic_volume,
+                        defect_ratio=defect_ratio,
+                        severity_level=fuzzy_severity/100.0,  # Convert to 0-1 range
+                        threshold=0.35  # Lower threshold to be more sensitive to defects
+                    )
+                    
+                    if MODEL_AVAILABLE:
+                        logger.info(f"Using random forest model for repair decision: {repair_decision}")
+                    else:
+                        logger.info(f"Using fallback model for repair decision: {repair_decision}")
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to get repair decision: {e}")
+                    # Fallback to simple heuristic using fuzzy severity
+                    repair_decision = 1 if (fuzzy_severity > 20.0 or defect_ratio > 0.1) else 0
+                    logger.info(f"Using emergency fallback decision based on fuzzy severity {fuzzy_severity:.1f}% and defect ratio {defect_ratio:.3f}")
 
-                # Use random forest for repair decision (not probability)
-                repair_decision = random_forest.predict_repair_decision(
-                    traffic_volume=traffic_volume,
-                    defect_ratio=defect_ratio,
-                    severity_level=severity_level,
-                )
                 logger.info(f"Fuzzy severity calculation successful: {fuzzy_severity:.2f}%")
             except Exception as e:
                 logger.warning(f"Fuzzy logic calculation failed: {e}")

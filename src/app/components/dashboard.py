@@ -1,11 +1,13 @@
 import sys
 import cv2
 import numpy as np
+import json
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QLabel, QVBoxLayout, QHBoxLayout,
     QWidget, QComboBox, QPushButton, QSlider, QGroupBox,
     QStatusBar, QSplitter, QFrame, QMessageBox, QDialog,
-    QFileDialog, QFormLayout, QDoubleSpinBox, QLineEdit, QInputDialog
+    QFileDialog, QFormLayout, QDoubleSpinBox, QLineEdit, QInputDialog,
+    QProgressDialog
 )
 from PyQt5.QtCore import Qt, QSize, QRect, QTimer, pyqtSignal, QThread
 from PyQt5.QtGui import QPainter, QPen, QColor, QFont, QImage, QPixmap
@@ -13,6 +15,7 @@ from src.app.modules.camera import Camera
 from src.app.modules.gps_reader import GPSReader
 from src.app.modules.detection import DefectDetector
 from src.app.modules.cloud_connector import CloudStorage
+from src.app.modules.severity_calculator import SeverityCalculator
 import time
 import os
 import threading
@@ -393,6 +396,194 @@ class SettingsDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save settings: {str(e)}")
 
+class DirectorySelectionDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Directories")
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(200)
+        
+        # Initialize directories
+        self.input_dir = ""
+        self.output_dir = ""
+        
+        # Setup UI
+        self.setup_ui()
+        
+        # Apply dark theme
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #2b2b2b;
+                color: #f0f0f0;
+            }
+            QLabel {
+                color: #f0f0f0;
+            }
+            QPushButton {
+                background-color: #4a4a4a;
+                color: #ddd;
+                padding: 8px;
+                border: none;
+                border-radius: 4px;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                background-color: #5a5a5a;
+            }
+            QPushButton#proceedButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                padding: 10px;
+                min-width: 120px;
+            }
+            QPushButton#proceedButton:hover {
+                background-color: #45a049;
+            }
+            QLineEdit {
+                background-color: #3b3b3b;
+                color: #f0f0f0;
+                padding: 5px;
+                border: 1px solid #555;
+                border-radius: 4px;
+            }
+            QGroupBox {
+                border: 1px solid #555;
+                margin-top: 10px;
+                color: #f0f0f0;
+            }
+            QGroupBox:title {
+                subcontrol-origin: margin;
+                subcontrol-position: top center;
+                padding: 0 3px;
+            }
+        """)
+
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        
+        # Input directory selection
+        input_group = QGroupBox("Input Directory")
+        input_layout = QHBoxLayout()
+        self.input_edit = QLineEdit()
+        self.input_edit.setReadOnly(True)
+        self.input_edit.setPlaceholderText("Select input directory containing images...")
+        input_browse = QPushButton("Browse...")
+        input_browse.clicked.connect(self.browse_input)
+        input_layout.addWidget(self.input_edit)
+        input_layout.addWidget(input_browse)
+        input_group.setLayout(input_layout)
+        layout.addWidget(input_group)
+        
+        # Output directory selection
+        output_group = QGroupBox("Output Directory")
+        output_layout = QHBoxLayout()
+        self.output_edit = QLineEdit()
+        self.output_edit.setReadOnly(True)
+        self.output_edit.setPlaceholderText("Select output directory for processed images...")
+        output_browse = QPushButton("Browse...")
+        output_browse.clicked.connect(self.browse_output)
+        output_layout.addWidget(self.output_edit)
+        output_layout.addWidget(output_browse)
+        output_group.setLayout(output_layout)
+        layout.addWidget(output_group)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.proceed_button = QPushButton("Proceed")
+        self.proceed_button.setObjectName("proceedButton")
+        self.proceed_button.clicked.connect(self.accept)
+        self.proceed_button.setEnabled(False)  # Initially disabled
+        
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(self.proceed_button)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+        # Connect signals to validate directory selection
+        self.input_edit.textChanged.connect(self.validate_directories)
+        self.output_edit.textChanged.connect(self.validate_directories)
+
+    def validate_directories(self):
+        """Validate that both directories are selected and different"""
+        input_dir = self.input_edit.text()
+        output_dir = self.output_edit.text()
+        
+        # Basic validation
+        if not input_dir or not output_dir:
+            self.proceed_button.setEnabled(False)
+            return False
+            
+        # Check if directories are the same
+        if input_dir == output_dir:
+            self.proceed_button.setEnabled(False)
+            return False
+            
+        # Check if input directory exists
+        if not os.path.exists(input_dir):
+            self.proceed_button.setEnabled(False)
+            return False
+            
+        # Check if output directory exists or can be created
+        if not os.path.exists(output_dir):
+            try:
+                os.makedirs(output_dir, exist_ok=True)
+            except Exception:
+                self.proceed_button.setEnabled(False)
+                return False
+        
+        # If we get here, the directories are valid
+        self.proceed_button.setEnabled(True)
+        return True
+
+    def accept(self):
+        """Override accept to ensure directories are valid"""
+        if not self.validate_directories():
+            QMessageBox.warning(
+                self,
+                "Invalid Selection",
+                "Please ensure:\n"
+                "1. Both directories are selected\n"
+                "2. Input and output directories are different\n"
+                "3. Input directory exists\n"
+                "4. Output directory can be created"
+            )
+            return
+        super().accept()
+
+    def browse_input(self):
+        dir_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Input Directory",
+            self.input_edit.text() or os.path.expanduser("~"),
+            QFileDialog.ShowDirsOnly
+        )
+        if dir_path:
+            self.input_dir = dir_path
+            self.input_edit.setText(dir_path)
+            self.validate_directories()
+
+    def browse_output(self):
+        dir_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Output Directory",
+            self.output_edit.text() or os.path.expanduser("~"),
+            QFileDialog.ShowDirsOnly
+        )
+        if dir_path:
+            self.output_dir = dir_path
+            self.output_edit.setText(dir_path)
+            self.validate_directories()
+
+    def get_directories(self):
+        """Return the selected directories"""
+        return self.input_dir, self.output_dir
+
 class Dashboard(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -693,59 +884,343 @@ class Dashboard(QMainWindow):
         """)
         self.connect_cloud_button.clicked.connect(self.handle_connect_cloud)
 
-        # Send Data button
-        self.send_data_button = QPushButton("Send Data")
-        self.send_data_button.setObjectName("send_data_button")
-        self.send_data_button.setStyleSheet("""
-            #send_data_button {
-                background-color: #f7ca18;
-                color: #222;
-                font-weight: bold;
-                padding: 12px;
-                border-radius: 6px;
-                border: 2px solid #b7950b;
-            }
-            #send_data_button:hover {
-                background-color: #f4d03f;
-                border-color: #b7950b;
-            }
-            #send_data_button:pressed {
-                background-color: #b7950b;
-                border-color: #7d6608;
-            }
-        """)
-        self.send_data_button.clicked.connect(self.handle_send_data)
-
     def handle_upload_data(self):
-        """Call the upload data callback if provided, else run pipeline if cloud is connected."""
-        if self.upload_data_callback:
-            self.upload_data_callback(self)
-        elif hasattr(self, "cloud_storage") and self.cloud_storage and self.cloud_storage.is_initialized:
-            # Run the pipeline from trial.py
-            from src.app.modules.trial import run_pipeline
-            image_path = "test_images/detection_20250507_110722.png"  # Or get from UI
-            save_path = "output/processed_road.png"
-            camera_matrix = np.array([[1000, 0, 640],
-                                      [0, 1000, 360],
-                                      [0, 0, 1]], dtype=np.float32)
+        """Process images and upload data to cloud."""
+        # Set up logging
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        logger = logging.getLogger(__name__)
+
+        try:
+            # Get input directory
+            input_dir = QFileDialog.getExistingDirectory(
+                self,
+                "Select Input Directory",
+                os.path.expanduser("~"),
+                QFileDialog.ShowDirsOnly
+            )
+            if not input_dir:
+                logger.info("No input directory selected")
+                return
+
+            # Get output directory
+            output_dir = QFileDialog.getExistingDirectory(
+                self,
+                "Select Output Directory",
+                os.path.expanduser("~"),
+                QFileDialog.ShowDirsOnly
+            )
+            if not output_dir:
+                logger.info("No output directory selected")
+                return
+
+            # Create output directory if it doesn't exist
+            os.makedirs(output_dir, exist_ok=True)
+            logger.info(f"Input directory: {input_dir}")
+            logger.info(f"Output directory: {output_dir}")
+
+            # Get list of image files
+            image_files = [f for f in os.listdir(input_dir) 
+                         if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            
+            logger.info(f"Found {len(image_files)} image files")
+            if not image_files:
+                QMessageBox.warning(self, "No Images", "No image files found in the selected directory.")
+                return
+
+            # Create progress dialog
+            progress = QProgressDialog("Processing images...", "Cancel", 0, len(image_files), self)
+            progress.setWindowTitle("Processing Images")
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(0)  # Show immediately
+            progress.setAutoClose(True)
+            progress.setAutoReset(True)
+
+            # Initialize timing variables
+            start_time = time.time()
+            processed_count = 0
+            total_images = len(image_files)
+
+            # Model path
+            if getattr(sys, 'frozen', False):
+                model_path = os.path.join(sys._MEIPASS, 'models', 'road_defect.pt')
+            else:
+                model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'road_defect.pt')
+
+            logger.info(f"Looking for model at: {model_path}")
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"YOLO model not found at {model_path}")
+
+            # Initialize detector if not already initialized
+            if not hasattr(self, 'detector') or self.detector is None:
+                logger.info("Initializing detector...")
+                try:
+                    from src.app.modules.detection import DefectDetector
+                    from src.app.modules.severity_calculator import SeverityCalculator
+                    
+                    # Initialize both detector and severity calculator
+                    self.detector = DefectDetector(model_path=model_path)
+                    self.severity_calculator = SeverityCalculator(
+                        camera_width=1280,  # Default camera resolution
+                        camera_height=720,
+                        model_path=model_path
+                    )
+                    
+                    if not self.detector or not self.severity_calculator:
+                        raise RuntimeError("Failed to initialize detector or severity calculator")
+                    logger.info("Detector and severity calculator initialized successfully")
+                except Exception as e:
+                    logger.error(f"Failed to initialize detector: {str(e)}")
+                    raise
+
+            # Initialize camera calibration parameters
+            camera_matrix = np.array([
+                [1000, 0, 320],
+                [0, 1000, 240],
+                [0, 0, 1]
+            ])
             distortion_coeffs = np.zeros(5)
-            run_pipeline(image_path, save_path, camera_matrix, distortion_coeffs, cloud=self.cloud_storage, calculator=self.camera.detector.severity_calculator if hasattr(self.camera, "detector") and hasattr(self.camera.detector, "severity_calculator") else None)
-        else:
-            QMessageBox.warning(self, "Upload", "No cloud connection or upload callback configured.")
+
+            # Process each image
+            processed_files = []  # Track successfully processed files
+            for idx, filename in enumerate(image_files):
+                if progress.wasCanceled():
+                    logger.info("Processing cancelled by user")
+                    break
+
+                input_path = os.path.join(input_dir, filename)
+                output_path = os.path.join(output_dir, f"processed_{filename}")
+                logger.info(f"Processing image {idx + 1}/{total_images}: {filename}")
+
+                try:
+                    # Update progress dialog
+                    elapsed_time = time.time() - start_time
+                    if processed_count > 0:
+                        avg_speed = elapsed_time / processed_count
+                        eta = avg_speed * (total_images - processed_count)
+                        progress.setLabelText(
+                            f"Processing: {filename}\n"
+                            f"Speed: {avg_speed:.2f}s per image\n"
+                            f"ETA: {eta:.1f}s remaining"
+                        )
+                    else:
+                        progress.setLabelText(f"Processing: {filename}")
+
+                    # Process image with severity calculator
+                    final_img, defect_pixels, defect_ratio, metadata = self.severity_calculator.process_image(
+                        input_path,
+                        camera_matrix,
+                        distortion_coeffs,
+                        output_path,
+                        distance_to_object_m=1.0,  # Default distance
+                        confidence_threshold=0.15
+                    )
+
+                    if final_img is not None and len(defect_pixels) > 0:
+                        # Save processed image
+                        save_success = cv2.imwrite(output_path, final_img)
+                        if save_success:
+                            processed_files.append(output_path)
+                            processed_count += 1
+                            logger.info(f"Successfully processed and saved: {filename}")
+
+                            # Update statistics from metadata
+                            if metadata:
+                                self.update_defect_stats(
+                                    metadata['DefectCounts'].get('Linear-Crack', 0),
+                                    metadata['DefectCounts'].get('Alligator-Crack', 0),
+                                    metadata['DefectCounts'].get('Pothole', 0)
+                                )
+                                
+                                # Save metadata as JSON
+                                json_path = os.path.splitext(output_path)[0] + '_metadata.json'
+                                with open(json_path, 'w') as f:
+                                    json.dump(metadata, f, indent=4)
+                                logger.info(f"Saved metadata to: {json_path}")
+                        else:
+                            logger.error(f"Failed to save processed image: {output_path}")
+                    else:
+                        logger.info(f"No defects detected in {filename}, skipping...")
+
+                except Exception as e:
+                    logger.error(f"Error processing {filename}: {str(e)}", exc_info=True)
+
+                # Update progress bar
+                progress.setValue(idx + 1)
+                QApplication.processEvents()
+
+            # Calculate final statistics
+            total_time = time.time() - start_time
+            avg_speed = total_time / processed_count if processed_count > 0 else 0
+
+            logger.info(f"Processing complete. Processed {processed_count} out of {total_images} images")
+            logger.info(f"Total time: {total_time:.1f}s, Average speed: {avg_speed:.2f}s per image")
+
+            # Show completion message
+            progress.close()
+            if processed_count > 0:
+                QMessageBox.information(
+                    self,
+                    "Processing Complete",
+                    f"Successfully processed {processed_count} out of {total_images} images.\n\n"
+                    f"Total processing time: {total_time:.1f} seconds\n"
+                    f"Average speed: {avg_speed:.2f} seconds per image\n"
+                    f"Output directory: {output_dir}"
+                )
+            else:
+                error_msg = (
+                    "No images were processed successfully.\n\n"
+                    "Please check the following:\n"
+                    "1. The input directory contains valid image files (.jpg, .jpeg, .png)\n"
+                    "2. The images can be read by OpenCV\n"
+                    "3. The detector is properly initialized\n"
+                    "4. Check the application logs for detailed error messages\n\n"
+                    f"Input directory: {input_dir}\n"
+                    f"Output directory: {output_dir}\n"
+                    f"Total images found: {total_images}"
+                )
+                logger.error(error_msg)
+                QMessageBox.warning(self, "Processing Complete", error_msg)
+
+        except Exception as e:
+            logger.error(f"Script failed: {str(e)}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Processing Error",
+                f"An error occurred during processing: {str(e)}\n\n"
+                "Please check the application logs for more details."
+            )
 
     def handle_connect_cloud(self):
-        """Initialize cloud connection"""
+        """Initialize cloud connection and handle upload of all files in directory"""
         try:
-            self.cloud_storage = CloudStorage()
-            if self.cloud_storage.is_initialized:
-                self.cloud_connected = True
-                QMessageBox.information(self, "Cloud", "Connected to cloud successfully.")
+            # If already connected, handle upload
+            if self.cloud_connected and self.cloud_storage:
+                # Get directory to upload from
+                upload_dir = QFileDialog.getExistingDirectory(
+                    self,
+                    "Select Directory to Upload",
+                    os.path.expanduser("~"),
+                    QFileDialog.ShowDirsOnly
+                )
+                
+                if not upload_dir:
+                    logging.info("No directory selected for upload")
+                    return
+
+                # Get list of all files in directory
+                all_files = [f for f in os.listdir(upload_dir) if os.path.isfile(os.path.join(upload_dir, f))]
+                logging.info(f"Found {len(all_files)} files in directory: {upload_dir}")
+                
+                if not all_files:
+                    QMessageBox.warning(
+                        self,
+                        "Upload Error",
+                        f"No files found in the selected directory:\n{upload_dir}"
+                    )
+                    return
+
+                # Create progress dialog for upload
+                progress = QProgressDialog("Uploading files to cloud...", "Cancel", 0, len(all_files), self)
+                progress.setWindowTitle("Cloud Upload")
+                progress.setWindowModality(Qt.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.setAutoClose(True)
+                progress.setAutoReset(True)
+
+                # Upload each file
+                success_count = 0
+                for idx, filename in enumerate(all_files):
+                    if progress.wasCanceled():
+                        break
+
+                    file_path = os.path.join(upload_dir, filename)
+                    progress.setLabelText(f"Uploading: {filename}\nFrom: {upload_dir}")
+
+                    try:
+                        # Read file content
+                        with open(file_path, 'rb') as f:
+                            file_content = f.read()
+
+                        # Determine content type
+                        if filename.lower().endswith(('.jpg', '.jpeg')):
+                            content_type = 'image/jpeg'
+                        elif filename.lower().endswith('.png'):
+                            content_type = 'image/png'
+                        elif filename.lower().endswith('.json'):
+                            content_type = 'application/json'
+                        else:
+                            content_type = 'application/octet-stream'
+
+                        # Create blob name with folder path
+                        folder_path = self.cloud_storage.settings['folder_path'].rstrip('/')
+                        blob_name = f"{folder_path}/{filename}"
+
+                        # Upload file
+                        blob = self.cloud_storage.bucket.blob(blob_name)
+                        blob.upload_from_string(
+                            file_content,
+                            content_type=content_type
+                        )
+                        
+                        success_count += 1
+                        logging.info(f"Successfully uploaded: {filename}")
+
+                    except Exception as e:
+                        logging.error(f"Error uploading {filename}: {str(e)}", exc_info=True)
+
+                    # Update progress
+                    progress.setValue(idx + 1)
+                    QApplication.processEvents()
+
+                # Show upload completion message
+                if success_count > 0:
+                    QMessageBox.information(
+                        self,
+                        "Upload Complete",
+                        f"Successfully uploaded {success_count} out of {len(all_files)} files to cloud.\n\n"
+                        f"Uploaded from: {upload_dir}"
+                    )
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "Upload Complete",
+                        f"No files were uploaded successfully from:\n{upload_dir}\n\n"
+                        "Please check the application logs for more details."
+                    )
+
             else:
-                self.cloud_connected = False
-                QMessageBox.warning(self, "Cloud", "Failed to connect to cloud. Check credentials and settings.")
+                # Initialize cloud connection
+                self.cloud_storage = CloudStorage()
+                if self.cloud_storage.is_initialized:
+                    self.cloud_connected = True
+                    self.connect_cloud_button.setText("Upload to Cloud")
+                    self.connect_cloud_button.setStyleSheet("""
+                        #connect_cloud_button {
+                            background-color: #4CAF50;
+                            color: white;
+                            font-weight: bold;
+                            padding: 12px;
+                            border-radius: 6px;
+                            border: 2px solid #45a049;
+                        }
+                        #connect_cloud_button:hover {
+                            background-color: #45a049;
+                            border-color: #3d8b40;
+                        }
+                        #connect_cloud_button:pressed {
+                            background-color: #3d8b40;
+                            border-color: #2e6b31;
+                        }
+                    """)
+                    QMessageBox.information(self, "Cloud", "Connected to cloud successfully.")
+                else:
+                    self.cloud_connected = False
+                    QMessageBox.warning(self, "Cloud", "Failed to connect to cloud. Check credentials and settings.")
+
         except Exception as e:
             self.cloud_connected = False
-            QMessageBox.critical(self, "Cloud", f"Error connecting to cloud: {str(e)}")
+            logging.error(f"Cloud operation failed: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "Cloud Error", f"Error during cloud operation: {str(e)}")
 
     def handle_send_data(self):
         """Send current frame and dummy data to cloud"""
@@ -1105,27 +1580,246 @@ class Dashboard(QMainWindow):
                     QMessageBox.warning(self, "GPS Error", "Failed to connect to GPS device")
 
     def run_analysis(self):
-        if not self.detecting:
-            QMessageBox.warning(self, "Analysis Error", "Please start detection first")
-            return
-        
-        # Start inference in a separate thread
-        threading.Thread(target=self._run_inference, daemon=True).start()
+        """Run analysis on a directory of images and upload results to cloud."""
+        # Set up logging
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        logger = logging.getLogger(__name__)
 
-    def _run_inference(self):
         try:
-            # Get current frame for analysis
-            if self.camera_thread and self.camera_thread.isRunning():
-                ret, frame = self.camera.capture.read()
-                if ret:
-                    results = self.camera.detector.analyze_frame(frame)  # Assuming analyze_frame returns the results
-                    self.update_defect_stats(
-                        results.get('linear_cracks', 0),
-                        results.get('alligator_cracks', 0),
-                        results.get('potholes', 0)
+            # Show directory selection dialog
+            dialog = DirectorySelectionDialog(self)
+            if dialog.exec_() != QDialog.Accepted:
+                logger.info("Directory selection cancelled")
+                return
+
+            # Get selected directories
+            input_dir = os.path.abspath(dialog.get_directories()[0])  # Get absolute path
+            output_dir = os.path.abspath(dialog.get_directories()[1])  # Get absolute path
+            logger.info(f"Selected input directory (absolute path): {input_dir}")
+            logger.info(f"Selected output directory (absolute path): {output_dir}")
+
+            # Verify input directory exists and is accessible
+            if not os.path.exists(input_dir):
+                logger.error(f"Input directory does not exist: {input_dir}")
+                QMessageBox.critical(self, "Error", f"Input directory does not exist:\n{input_dir}")
+                return
+
+            if not os.access(input_dir, os.R_OK):
+                logger.error(f"No read permission for input directory: {input_dir}")
+                QMessageBox.critical(self, "Error", f"No read permission for input directory:\n{input_dir}")
+                return
+
+            # List all files in directory for debugging
+            all_files = os.listdir(input_dir)
+            logger.info(f"All files in directory: {all_files}")
+
+            # Get list of image files with more detailed logging
+            image_files = []
+            for f in all_files:
+                full_path = os.path.join(input_dir, f)
+                if os.path.isfile(full_path):  # Only check files, not directories
+                    if f.lower().endswith(('.png', '.jpg', '.jpeg')):
+                        image_files.append(f)
+                        logger.info(f"Found image file: {f}")
+                    else:
+                        logger.debug(f"Skipping non-image file: {f}")
+                else:
+                    logger.debug(f"Skipping directory: {f}")
+
+            logger.info(f"Found {len(image_files)} image files: {image_files}")
+            
+            if not image_files:
+                error_msg = (
+                    "No image files found in the selected directory.\n\n"
+                    f"Directory: {input_dir}\n"
+                    "Supported formats: .png, .jpg, .jpeg\n\n"
+                    "Please ensure:\n"
+                    "1. The directory contains image files\n"
+                    "2. The files have correct extensions (.png, .jpg, .jpeg)\n"
+                    "3. You have read permissions for the files"
+                )
+                logger.error(error_msg)
+                QMessageBox.warning(self, "No Images", error_msg)
+                return
+
+            # Store the selected output directory as a class attribute
+            self.selected_output_dir = output_dir
+            logger.info(f"Selected output directory stored: {self.selected_output_dir}")
+
+            # Create output directory if it doesn't exist
+            try:
+                os.makedirs(output_dir, exist_ok=True)
+                logger.info(f"Output directory created/verified: {output_dir}")
+            except Exception as e:
+                logger.error(f"Failed to create output directory: {str(e)}")
+                QMessageBox.critical(self, "Error", f"Failed to create output directory:\n{output_dir}\n\nError: {str(e)}")
+                return
+
+            # Initialize list to track processed files
+            processed_files = []
+
+            # Create progress dialog
+            progress = QProgressDialog("Processing images...", "Cancel", 0, len(image_files), self)
+            progress.setWindowTitle("Processing Images")
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(0)  # Show immediately
+            progress.setAutoClose(True)
+            progress.setAutoReset(True)
+
+            # Initialize timing variables
+            start_time = time.time()
+            processed_count = 0
+            total_images = len(image_files)
+
+            # Model path
+            if getattr(sys, 'frozen', False):
+                model_path = os.path.join(sys._MEIPASS, 'models', 'road_defect.pt')
+            else:
+                model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'road_defect.pt')
+
+            logger.info(f"Looking for model at: {model_path}")
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"YOLO model not found at {model_path}")
+
+            # Initialize detector if not already initialized
+            if not hasattr(self, 'detector') or self.detector is None:
+                logger.info("Initializing detector...")
+                try:
+                    from src.app.modules.detection import DefectDetector
+                    from src.app.modules.severity_calculator import SeverityCalculator
+                    
+                    # Initialize both detector and severity calculator
+                    self.detector = DefectDetector(model_path=model_path)
+                    self.severity_calculator = SeverityCalculator(
+                        camera_width=1280,  # Default camera resolution
+                        camera_height=720,
+                        model_path=model_path
                     )
+                    
+                    if not self.detector or not self.severity_calculator:
+                        raise RuntimeError("Failed to initialize detector or severity calculator")
+                    logger.info("Detector and severity calculator initialized successfully")
+                except Exception as e:
+                    logger.error(f"Failed to initialize detector: {str(e)}")
+                    raise
+
+            # Initialize camera calibration parameters
+            camera_matrix = np.array([
+                [1000, 0, 320],
+                [0, 1000, 240],
+                [0, 0, 1]
+            ])
+            distortion_coeffs = np.zeros(5)
+
+            # Process each image
+            processed_files = []  # Track successfully processed files
+            for idx, filename in enumerate(image_files):
+                if progress.wasCanceled():
+                    logger.info("Processing cancelled by user")
+                    break
+
+                input_path = os.path.join(input_dir, filename)
+                output_path = os.path.join(output_dir, f"processed_{filename}")
+                logger.info(f"Processing image {idx + 1}/{total_images}: {filename}")
+
+                try:
+                    # Update progress dialog
+                    elapsed_time = time.time() - start_time
+                    if processed_count > 0:
+                        avg_speed = elapsed_time / processed_count
+                        eta = avg_speed * (total_images - processed_count)
+                        progress.setLabelText(
+                            f"Processing: {filename}\n"
+                            f"Speed: {avg_speed:.2f}s per image\n"
+                            f"ETA: {eta:.1f}s remaining"
+                        )
+                    else:
+                        progress.setLabelText(f"Processing: {filename}")
+
+                    # Process image with severity calculator
+                    final_img, defect_pixels, defect_ratio, metadata = self.severity_calculator.process_image(
+                        input_path,
+                        camera_matrix,
+                        distortion_coeffs,
+                        output_path,
+                        distance_to_object_m=1.0,  # Default distance
+                        confidence_threshold=0.16
+                    )
+
+                    if final_img is not None and len(defect_pixels) > 0:
+                        # Save processed image
+                        save_success = cv2.imwrite(output_path, final_img)
+                        if save_success:
+                            processed_files.append(output_path)
+                            processed_count += 1
+                            logger.info(f"Successfully processed and saved: {filename}")
+
+                            # Update statistics from metadata
+                            if metadata:
+                                self.update_defect_stats(
+                                    metadata['DefectCounts'].get('Linear-Crack', 0),
+                                    metadata['DefectCounts'].get('Alligator-Crack', 0),
+                                    metadata['DefectCounts'].get('Pothole', 0)
+                                )
+                                
+                                # Save metadata as JSON
+                                json_path = os.path.splitext(output_path)[0] + '_metadata.json'
+                                with open(json_path, 'w') as f:
+                                    json.dump(metadata, f, indent=4)
+                                logger.info(f"Saved metadata to: {json_path}")
+                        else:
+                            logger.error(f"Failed to save processed image: {output_path}")
+                    else:
+                        logger.info(f"No defects detected in {filename}, skipping...")
+
+                except Exception as e:
+                    logger.error(f"Error processing {filename}: {str(e)}", exc_info=True)
+
+                # Update progress bar
+                progress.setValue(idx + 1)
+                QApplication.processEvents()
+
+            # Calculate final statistics
+            total_time = time.time() - start_time
+            avg_speed = total_time / processed_count if processed_count > 0 else 0
+
+            logger.info(f"Processing complete. Processed {processed_count} out of {total_images} images")
+            logger.info(f"Total time: {total_time:.1f}s, Average speed: {avg_speed:.2f}s per image")
+
+            # Show completion message
+            progress.close()
+            if processed_count > 0:
+                QMessageBox.information(
+                    self,
+                    "Processing Complete",
+                    f"Successfully processed {processed_count} out of {total_images} images.\n\n"
+                    f"Total processing time: {total_time:.1f} seconds\n"
+                    f"Average speed: {avg_speed:.2f} seconds per image\n"
+                    f"Output directory: {output_dir}"
+                )
+            else:
+                error_msg = (
+                    "No images were processed successfully.\n\n"
+                    "Please check the following:\n"
+                    "1. The input directory contains valid image files (.jpg, .jpeg, .png)\n"
+                    "2. The images can be read by OpenCV\n"
+                    "3. The detector is properly initialized\n"
+                    "4. Check the application logs for detailed error messages\n\n"
+                    f"Input directory: {input_dir}\n"
+                    f"Output directory: {output_dir}\n"
+                    f"Total images found: {total_images}"
+                )
+                logger.error(error_msg)
+                QMessageBox.warning(self, "Processing Complete", error_msg)
+
         except Exception as e:
-            QMessageBox.critical(self, "Analysis Error", f"Failed to run analysis: {str(e)}")
+            logger.error(f"Script failed: {str(e)}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Processing Error",
+                f"An error occurred during processing: {str(e)}\n\n"
+                "Please check the application logs for more details."
+            )
 
     def show_settings(self):
         """Show settings dialog"""
@@ -1365,7 +2059,6 @@ class Dashboard(QMainWindow):
         main_layout.addWidget(self.run_analysis_button)
         main_layout.addWidget(self.settings_button)
         main_layout.addWidget(self.connect_cloud_button)  # Add connect cloud button
-        main_layout.addWidget(self.send_data_button)      # Add send data button
         main_group.setLayout(main_layout)
 
         layout.addWidget(video_group, stretch=1)

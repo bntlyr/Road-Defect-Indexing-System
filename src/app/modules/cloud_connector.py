@@ -64,7 +64,7 @@ class CloudStorage:
             self.is_initialized = False
             return False
             
-    def upload_detection(self, image: Any, defect_counts: Dict[str, int], frame_counts: Dict[str, int], bboxes: Optional[list] = None) -> bool:
+    def upload_detection(self, image: Any, defect_counts: Dict[str, int], frame_counts: Dict[str, int], bboxes: Optional[list] = None, metadata: Optional[Dict] = None, original_filename: Optional[str] = None) -> bool:
         """Upload detection image with metadata embedded in EXIF UserComment and bounding boxes drawn in red."""
         if not self.is_initialized:
             self.logger.warning("Cloud storage not initialized - skipping upload")
@@ -78,9 +78,14 @@ class CloudStorage:
             # Create timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            # Create blob names with folder path
+            # Create blob names with folder path and original filename if provided
             folder_path = self.settings['folder_path'].rstrip('/')
-            image_blob_name = f"{folder_path}/detection_{timestamp}.jpg"
+            if original_filename:
+                # Use original filename but ensure it's unique with timestamp
+                base_name = os.path.splitext(original_filename)[0]
+                image_blob_name = f"{folder_path}/{base_name}_{timestamp}.jpg"
+            else:
+                image_blob_name = f"{folder_path}/detection_{timestamp}.jpg"
 
             # Prepare metadata (convert numpy types to Python types)
             def to_python_type(val):
@@ -90,18 +95,27 @@ class CloudStorage:
                     return val.tolist()
                 return val
 
-            defect_counts_py = {k: to_python_type(v) for k, v in defect_counts.items()}
-            frame_counts_py = {k: to_python_type(v) for k, v in frame_counts.items()}
-
-            metadata = {
+            # Combine provided metadata with detection data
+            upload_metadata = {
                 'timestamp': timestamp,
-                'defect_counts': defect_counts_py,
-                'frame_counts': frame_counts_py,
+                'defect_counts': {k: to_python_type(v) for k, v in defect_counts.items()},
+                'frame_counts': {k: to_python_type(v) for k, v in frame_counts.items()},
                 'project_id': self.settings['project_id'],
                 'region': self.settings['region'],
                 'bucket': self.settings['bucket_name'],
                 'folder_path': folder_path
             }
+
+            # Add additional metadata if provided
+            if metadata:
+                # Convert any numpy types in metadata
+                processed_metadata = {}
+                for k, v in metadata.items():
+                    if isinstance(v, (np.ndarray, np.generic)):
+                        processed_metadata[k] = to_python_type(v)
+                    else:
+                        processed_metadata[k] = v
+                upload_metadata.update(processed_metadata)
 
             # Convert OpenCV image (BGR) to PIL Image (RGB) and draw bounding boxes if provided
             if isinstance(image, np.ndarray):
@@ -126,7 +140,7 @@ class CloudStorage:
 
             # Prepare EXIF UserComment with metadata
             exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
-            user_comment = json.dumps(metadata)
+            user_comment = json.dumps(upload_metadata)
             encoded_comment = b"ASCII\0\0\0" + user_comment.encode('utf-8')
             import piexif.helper
             exif_dict['Exif'][piexif.ExifIFD.UserComment] = encoded_comment
@@ -142,7 +156,17 @@ class CloudStorage:
             image_blob = self.bucket.blob(image_blob_name)
             image_blob.upload_from_file(img_bytes, content_type='image/jpeg')
 
-            self.logger.info(f"Uploaded detection image with metadata {timestamp} to cloud storage")
+            # Also upload metadata as a separate JSON file
+            metadata_blob_name = os.path.splitext(image_blob_name)[0] + '_metadata.json'
+            metadata_blob = self.bucket.blob(metadata_blob_name)
+            metadata_blob.upload_from_string(
+                json.dumps(upload_metadata, indent=4),
+                content_type='application/json'
+            )
+
+            self.logger.info(f"Uploaded detection image and metadata {timestamp} to cloud storage")
+            self.logger.info(f"Image: {image_blob_name}")
+            self.logger.info(f"Metadata: {metadata_blob_name}")
             return True
 
         except Exception as e:
