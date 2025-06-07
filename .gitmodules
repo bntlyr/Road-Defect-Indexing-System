@@ -1,0 +1,3 @@
+[submodule "src/models/yolov10"]
+	path = src/models/yolov10
+	url = https://github.com/THU-MIG/yolov10.git
