@@ -66,7 +66,7 @@ class DefectDetector:
         self.class_names = {
             0: 'Linear-Crack',
             1: 'Alligator-Crack',
-            2: 'Pothole'
+            2: 'pothole'
         }
         
         self.confidence_threshold = 0.20  # Lower default confidence threshold
@@ -74,7 +74,7 @@ class DefectDetector:
         self.defect_colors = {
             'Linear-Crack': (0, 255, 0),     # Green
             'Alligator-Crack': (0, 165, 255), # Orange
-            'Pothole': (0, 0, 255)           # Red
+            'pothole': (0, 0, 255)           # Red
         }
 
         # Initialize frame counts for each class
@@ -434,7 +434,7 @@ class DefectDetector:
                                         color, 2)
                             
                             # Create label with class and confidence
-                            label = f"{class_name} {conf:.2f}"
+                            label = f"{class_name}"
                             
                             # Get text size for background rectangle
                             (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)

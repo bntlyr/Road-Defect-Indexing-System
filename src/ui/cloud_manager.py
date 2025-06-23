@@ -583,56 +583,88 @@ class CloudManagerDialog(QDialog):
             self.file_list.item(i).setCheckState(new_state) 
 
     def delete_selected_images(self):
-        """Delete selected images from the list and their associated metadata files."""
+        """Delete selected images and their metadata."""
         selected_items = []
         for i in range(self.file_list.count()):
             item = self.file_list.item(i)
             if item.checkState() == Qt.Checked:
                 selected_items.append(item)
-        
+
         if not selected_items:
             QMessageBox.warning(self, "No Selection", "Please select files to delete")
             return
-        
-        # Confirm deletion
-        reply = QMessageBox.question(
-            self,
-            "Confirm Deletion",
-            f"Are you sure you want to delete {len(selected_items)} selected file(s)?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
+
+        # Show confirmation dialog
+        reply = QMessageBox.question(self, "Confirm Delete", 
+                                   f"Are you sure you want to delete {len(selected_items)} selected file(s)?",
+                                   QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
         if reply == QMessageBox.Yes:
-            for item in selected_items:
+            # Create progress dialog for deletion
+            progress = QProgressDialog("Deleting files...", "Cancel", 0, len(selected_items), self)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowTitle("Delete Progress")
+            progress.setMinimumDuration(0)  # Show immediately
+            progress.setAutoClose(True)
+            progress.setAutoReset(True)
+            
+            success_count = 0
+            error_count = 0
+            
+            for i, item in enumerate(selected_items):
+                if progress.wasCanceled():
+                    break
+                    
                 filename = item.text()
+                progress.setValue(i)
+                progress.setLabelText(f"Deleting {filename}... ({i+1}/{len(selected_items)})")
+                
                 try:
                     if self.is_cloud_view:
                         # Delete from cloud storage
                         if self.cloud_storage and self.cloud_storage.is_initialized:
+                            # Delete image file
                             self.cloud_storage.delete_detection(filename)
+                            # Delete metadata file
+                            metadata_filename = f"{os.path.splitext(filename)[0]}_metadata.json"
+                            self.cloud_storage.delete_detection(metadata_filename)
+                            success_count += 1
                     else:
                         # Delete from local storage
                         if self.local_path:
+                            # Delete image file
                             file_path = os.path.join(self.local_path, filename)
-                            os.remove(file_path)
-                    
-                    # Delete the associated metadata.json file
-                    metadata_file_path = os.path.splitext(file_path)[0] + '_metadata.json'
-                    if os.path.exists(metadata_file_path):
-                        os.remove(metadata_file_path)
+                            if os.path.exists(file_path):
+                                os.remove(file_path)
+                            # Delete metadata file
+                            metadata_file_path = os.path.splitext(file_path)[0] + '_metadata.json'
+                            if os.path.exists(metadata_file_path):
+                                os.remove(metadata_file_path)
+                            success_count += 1
 
                     # Remove from list
                     self.file_list.takeItem(self.file_list.row(item))
                 except Exception as e:
+                    error_count += 1
                     QMessageBox.warning(self, "Error", f"Failed to delete {filename}: {str(e)}")
+            
+            # Set final progress value
+            progress.setValue(len(selected_items))
             
             # Clear preview if the deleted file was being displayed
             self.image_label.clear()
             self.metadata_text.clear()
             
-            # Update status
-            QMessageBox.information(self, "Success", f"Successfully deleted {len(selected_items)} file(s)")
+            # Show results
+            result_message = f"Delete Complete:\n"
+            result_message += f"Successfully deleted: {success_count} file(s)\n"
+            if error_count > 0:
+                result_message += f"Failed to delete: {error_count} file(s)"
+                
+            if error_count == 0:
+                QMessageBox.information(self, "Delete Complete", result_message)
+            else:
+                QMessageBox.warning(self, "Delete Complete", result_message)
 
     def upload_selected_images(self):
         """Upload selected images to the cloud along with their metadata"""

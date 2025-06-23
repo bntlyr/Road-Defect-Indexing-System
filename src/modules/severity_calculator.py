@@ -122,12 +122,36 @@ def extract_image_metadata(image_path: str) -> Tuple[Dict, Optional[Tuple[float,
 
                 # Parse UserComment as JSON
                 location_data = json.loads(user_comment)
-                latitude = location_data["detections"]["Location"]["latitude"]
-                longitude = location_data["detections"]["Location"]["longitude"]
                 
-                # Set GPS location from UserComment
-                gps_location = (latitude, longitude)
-            except (json.JSONDecodeError, KeyError, AttributeError) as e:
+                # Try to get GPS location from different possible formats
+                if "detections" in location_data:
+                    detections = location_data["detections"]
+                    
+                    # Try GPS array format first
+                    if "GPS" in detections and isinstance(detections["GPS"], list) and len(detections["GPS"]) >= 2:
+                        gps_location = (float(detections["GPS"][0]), float(detections["GPS"][1]))
+                        logger.info(f"Found GPS location from GPS array: {gps_location}")
+                    
+                    # Try Location string format if GPS array wasn't found
+                    elif "Location" in detections:
+                        location_str = detections["Location"]
+                        if isinstance(location_str, str):
+                            # Split the string and convert to floats
+                            lat_str, lon_str = location_str.split(",")
+                            gps_location = (float(lat_str.strip()), float(lon_str.strip()))
+                            logger.info(f"Found GPS location from Location string: {gps_location}")
+                
+                # Try new metadata format with Location object
+                elif "Location" in location_data and isinstance(location_data["Location"], dict):
+                    location = location_data["Location"]
+                    if "latitude" in location and "longitude" in location:
+                        gps_location = (float(location["latitude"]), float(location["longitude"]))
+                        logger.info(f"Found GPS location from Location object: {gps_location}")
+                
+                # Store the full metadata
+                metadata = location_data
+                
+            except (json.JSONDecodeError, KeyError, AttributeError, ValueError) as e:
                 logger.warning(f"Error parsing UserComment for location: {e}")
 
         return metadata, gps_location, []  # Return empty list for bounding boxes
@@ -698,8 +722,8 @@ class SeverityCalculator:
             # Define colors for different defect types with higher saturation
             defect_colors = {
                 'Linear-Crack': (0, 255, 0),     # Bright Green
-                'Alligator-Crack':  (0, 255, 0), # Bright Orange
-                'Pothole':  (0, 255, 0)           # Bright Red
+                'Alligator-Crack': (0, 255, 0),  # Bright Orange
+                'pothole': (0, 255, 0)           # Bright Red
             }
             
             # Process each detection with enhanced visualization
@@ -745,8 +769,8 @@ class SeverityCalculator:
                 # Draw bounding box with thicker lines
                 cv2.rectangle(visualization, (x1, y1), (x2, y2), color, 3)
                 
-                # Create label with class name and confidence
-                label = f"{class_name}: {confidence:.2f}"
+                # Create label with class name
+                label = f"{class_name}"
                 
                 # Get text size for background rectangle
                 (text_width, text_height), baseline = cv2.getTextSize(
@@ -788,8 +812,22 @@ class SeverityCalculator:
                 undistorted_img, detections, distance_to_object_m
             )
             
+            # Initialize defect counts
+            defect_counts = {
+                'Linear-Crack': 0,
+                'Alligator-Crack': 0,
+                'pothole': 0,
+                'Total': len(detections)
+            }
+            
+            # Count defects by class type
+            for detection in detections:
+                class_name = detection['class']
+                if class_name in defect_counts:
+                    defect_counts[class_name] += 1
+            
             # Determine dominant defect type for fuzzy logic
-            defect_type_counts = {class_name: 0 for class_name in ['Linear-Crack', 'Alligator-Crack', 'Pothole']}
+            defect_type_counts = {class_name: 0 for class_name in ['Linear-Crack', 'Alligator-Crack', 'pothole']}
             for detection in detections:
                 class_name = detection['class']
                 if class_name in defect_type_counts:
@@ -853,7 +891,7 @@ class SeverityCalculator:
             defect_counts = {
                 'Linear-Crack': 0,
                 'Alligator-Crack': 0,
-                'Pothole': 0,
+                'pothole': 0,
                 'Total': len(detections)
             }
             
@@ -983,101 +1021,38 @@ class SeverityCalculator:
 def is_image_file(filename):
     return filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff'))
 
-    
-# image_path = "C:/Users/bentl/Desktop/DATASET Vn/RDI-Detections/detection_20250523_161052.jpg" "C:\Users\bentl\Desktop\DATASET Vn\"
-if __name__ == "__main__":
-    # === Load image and apply Pinhole Camera Model ===
-    image_path = "C:/Users/bentl/Desktop/DATASET Vn/RDI-Detections/detection_20250523_161052.jpg"
-    model_path = "C:/Users/bentl/Desktop/RoadDefectSystem/src/models/road_defect.pt"
-    camera_matrix = np.array([[1000, 0, 320], [0, 1000, 240], [0, 0, 1]], dtype=np.float32)
-    distortion_coeffs = np.zeros(5)
 
+
+if __name__ == "__main__":
+    # === Load Image ===
+    image_path = "C:/Users/bentl/Desktop/RoadDefectSystem/Detection/detection_20250620_070232.jpg"
     img = cv2.imread(image_path)
     if img is None:
-        raise FileNotFoundError("Image not found.")
-    h, w = img.shape[:2]
-    new_mtx, _ = cv2.getOptimalNewCameraMatrix(camera_matrix, distortion_coeffs, (w, h), 1, (w, h))
-    undistorted = cv2.undistort(img, camera_matrix, distortion_coeffs, None, new_mtx)
+        raise FileNotFoundError(f"Image not found at {image_path}")
 
-    # === Initialize YOLO model ===
-    calculator = SeverityCalculator(
-        camera_width=1920,
-        camera_height=1080,
-        focal_length=35.0,
-        sensor_width=36.0,
-        sensor_height=24.0,
-        model_path=model_path
-    )
-    detections = calculator.detect_defects(undistorted, confidence_threshold=0.20)
+    # === Define Camera Parameters ===
+    camera_matrix = np.array([
+        [933.23, 0, 960],
+        [0, 711, 540],
+        [0, 0, 1]
+    ], dtype=np.float32)
+    distortion_coeffs = np.zeros(5)  # Assuming no distortion
 
-    # === Initialize step-by-step output canvases ===
-    step1 = undistorted.copy()
-    step2 = undistorted.copy()
-    step3 = undistorted.copy()
-    total_crack_area = 0
+    # === Apply Wide-Angle Warp (Barrel Distortion) ===
+    wide_angle_img = apply_barrel_distortion(img, k1=-0.3)
 
-    for det in detections:
-        x1, y1, x2, y2 = det['bbox']
-        roi = undistorted[y1:y2, x1:x2]
+    # === Apply Pinhole Camera Model (Undistortion) ===
+    undistorted = apply_pinhole_camera_model(img, camera_matrix, distortion_coeffs)
 
-        # === Step 1: Preprocessing ===
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8)).apply(gray)
-        contrast = cv2.convertScaleAbs(clahe, alpha=1.2, beta=0)
-        median = cv2.medianBlur(contrast, 3)
-        nlm = cv2.fastNlMeansDenoising(median, h=10)
-        preprocessed = nlm
+    # === Show Distorted and Undistorted ===
+    fig, axs = plt.subplots(1, 2, figsize=(14, 6))
+    axs[0].imshow(cv2.cvtColor(wide_angle_img, cv2.COLOR_BGR2RGB))
+    axs[0].set_title("Simulated Wide-Angle Image (Barrel Distortion)")
+    axs[0].axis("off")
 
-        # Apply preprocessing directly as overlay
-        overlay1 = cv2.cvtColor(preprocessed, cv2.COLOR_GRAY2BGR)
-        step1[y1:y2, x1:x2] = cv2.addWeighted(step1[y1:y2, x1:x2], 0.3, overlay1, 0.7, 0)
+    axs[1].imshow(cv2.cvtColor(undistorted, cv2.COLOR_BGR2RGB))
+    axs[1].set_title("After Pinhole Camera Model")
+    axs[1].axis("off")
 
-        # === Step 2: Thresholding (Otsu + Niblack + Morphology) ===
-        blur = cv2.GaussianBlur(preprocessed, (3, 3), 0)
-        _, otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        nib = threshold_niblack(blur, window_size=25, k=0.1)
-        nib_mask = (blur <= nib).astype(np.uint8) * 255
-        combined_thresh = cv2.bitwise_or(otsu, nib_mask)
-
-        kernel = np.ones((2, 2), np.uint8)
-        morph = cv2.morphologyEx(combined_thresh, cv2.MORPH_OPEN, kernel)
-        morph = cv2.morphologyEx(morph, cv2.MORPH_CLOSE, kernel)
-
-        # Create semi-transparent white overlay
-        white_mask = np.zeros_like(roi)
-        white_mask[morph == 255] = (255, 255, 255)
-        step2[y1:y2, x1:x2] = cv2.addWeighted(step2[y1:y2, x1:x2], 0.7, white_mask, 0.3, 0)
-
-        # === Step 3: Final Crack Mask Overlay (green transparent) ===
-        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(morph)
-        final_mask = np.zeros_like(morph)
-        for i in range(1, num_labels):
-            if stats[i, cv2.CC_STAT_AREA] >= 40:
-                final_mask[labels == i] = 255
-
-        green_overlay = np.zeros_like(roi)
-        green_overlay[final_mask == 255] = (0, 255, 0)
-        step3[y1:y2, x1:x2] = cv2.addWeighted(step3[y1:y2, x1:x2], 0.7, green_overlay, 0.3, 0)
-        total_crack_area += np.sum(final_mask == 255)
-
-        # === Draw bounding boxes and labels ===
-        for canvas in [step1, step2, step3]:
-            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(canvas, det['class'], (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
-    # === Final Display ===
-    titles = [
-        "PREPROCESSING",
-        "THRESHOLDING",
-        "FINAL OVERLAY"
-    ]
-    images = [step1, step2, step3]
-
-    fig, axs = plt.subplots(1, 3, figsize=(22, 6))
-    for ax, img, title in zip(axs, images, titles):
-        ax.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-        ax.set_title(title, fontsize=14)
-        ax.axis("off")
     plt.tight_layout()
     plt.show()
-

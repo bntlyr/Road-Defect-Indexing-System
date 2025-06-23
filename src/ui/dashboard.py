@@ -479,7 +479,7 @@ class Dashboard(QMainWindow):
                                 defect_counts = {
                                     'linear': counts.get('Linear-Crack', 0),
                                     'alligator': counts.get('Alligator-Crack', 0),
-                                    'pothole': counts.get('Pothole', 0)
+                                    'pothole': counts.get('pothole', 0)  # Changed to lowercase to match model output
                                 }
                                 self.statistics.update_defect_count(defect_counts)
                             logging.debug(f"Frame processed with detection. Counts: {counts}")
@@ -597,7 +597,7 @@ class Dashboard(QMainWindow):
                                         defect_counts = {
                                             'linear': counts.get('Linear-Crack', 0),
                                             'alligator': counts.get('Alligator-Crack', 0),
-                                            'pothole': counts.get('Pothole', 0)
+                                            'pothole': counts.get('pothole', 0)  # Changed to lowercase to match model output
                                         }
                                         self.statistics.update_defect_count(defect_counts)
                                     logging.debug(f"Frame processed with detection. Counts: {counts}")
