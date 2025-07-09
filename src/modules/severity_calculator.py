@@ -669,8 +669,9 @@ class SeverityCalculator:
                      distortion_coeffs: np.ndarray,
                      save_path: str,
                      distance_to_object_m: float = 1.0,
-                     confidence_threshold: float = 0.15
-                     ) -> Tuple[Optional[np.ndarray], List[int], float, Dict]:
+                     confidence_threshold: float = 0.15,
+                     auto_delete_raw_failed_detections = False) -> Tuple[Optional[np.ndarray], List[int], float, Dict]:
+                     
         """
         Process an image to detect and analyze road defects using the improved pipeline.
         """
@@ -698,6 +699,12 @@ class SeverityCalculator:
             # Skip processing if no defects are detected
             if not detections:
                 logger.warning(f"No defects detected in image: {image_path}. Skipping...")
+                if auto_delete_raw_failed_detections:
+                    try:
+                        os.remove(image_path)
+                        logger.info(f"Deleted raw image: {image_path} due to no detections")
+                    except Exception as e:
+                        logger.error(f"Failed to delete image {image_path}: {e}")
                 return None, [], 0.0, {}
             
             # Create enhanced crack visualization
@@ -982,7 +989,8 @@ class SeverityCalculator:
                        distortion_coeffs: np.ndarray, save_dir: str, 
                        distance_to_object_m: float = 1.0, 
                        confidence_threshold: float = 0.15, 
-                       batch_size: int = 8) -> List[Tuple[Optional[np.ndarray], List[int], float, Dict]]:
+                       batch_size: int = 8,
+                       auto_delete_raw_failed_detections = False) -> List[Tuple[Optional[np.ndarray], List[int], float, Dict]]:
         """
         Process multiple images in batches using multithreading.
         
@@ -1003,7 +1011,7 @@ class SeverityCalculator:
         with ThreadPoolExecutor(max_workers=batch_size) as executor:
             future_to_image = {executor.submit(self.process_image, image_path, camera_matrix, 
                                                 distortion_coeffs, os.path.join(save_dir, os.path.basename(image_path)), 
-                                                distance_to_object_m, confidence_threshold): image_path 
+                                                distance_to_object_m, confidence_threshold, auto_delete_raw_failed_detections): image_path 
                                 for image_path in image_paths}
             
             for future in as_completed(future_to_image):
@@ -1013,6 +1021,12 @@ class SeverityCalculator:
                     results.append(result)
                 except Exception as e:
                     logger.error(f"Error processing image {image_path}: {e}")
+                    if auto_delete_raw_failed_detections:
+                        try:
+                            os.remove(image_path)
+                            logger.info(f"Deleted raw image {image_path} due to processing failure")
+                        except Exception as delete_error:
+                            logger.error(f"Failed to delete image {image_path}: {delete_error}")
                     results.append((None, [], 0.0, {}))  # Append a failure result
 
         return results

@@ -25,14 +25,15 @@ class SettingsDialog(QDialog):
         """Set up the settings dialog UI"""
         layout = QVBoxLayout(self)
         
-        # Confidence threshold
+        # Confidence threshold (disabled)
         conf_layout = QHBoxLayout()
         conf_label = QLabel("Confidence Threshold:")
         self.conf_slider = QSlider(Qt.Horizontal)
         self.conf_slider.setMinimum(0)
         self.conf_slider.setMaximum(100)
-        self.conf_slider.setValue(50)  # Default to 0.5
-        self.conf_value_label = QLabel("0.5")
+        self.conf_slider.setValue(30)  # Fixed at 0.30
+        self.conf_slider.setEnabled(False)  # Disable the slider
+        self.conf_value_label = QLabel("0.30")  # Fixed value
         self.conf_slider.valueChanged.connect(self._update_conf_label)
         conf_layout.addWidget(conf_label)
         conf_layout.addWidget(self.conf_slider)
@@ -68,6 +69,11 @@ class SettingsDialog(QDialog):
         self.record_mode_checkbox.stateChanged.connect(self._on_record_mode_changed)
         layout.addWidget(self.record_mode_checkbox)
         
+        # Delete raw failed detection checkbox
+        self.delete_raw_failed_checkbox = QCheckBox("Auto Delete Raw Failed Detections")
+        self.delete_raw_failed_checkbox.stateChanged.connect(self._on_auto_delete_raw_failed_detections)
+        layout.addWidget(self.delete_raw_failed_checkbox)
+        
         # Buttons
         button_layout = QHBoxLayout()
         save_btn = QPushButton("Save")
@@ -82,13 +88,14 @@ class SettingsDialog(QDialog):
         """Load current settings into the dialog"""
         try:
             # Load current settings with proper type handling
-            conf_value = self.settings_manager.get_setting('confidence_threshold')
-            self.conf_slider.setValue(int(conf_value * 100))
+            # Always set confidence threshold to 0.30 (disabled)
+            self.conf_slider.setValue(30)  # 0.30
+            self.conf_value_label.setText("0.30")
             
-            output_dir = self.settings_manager.get_setting('output_dir')
+            output_dir = self.settings_manager.get_setting('output_directory')
             self.output_dir_edit.setText(str(output_dir))
             
-            rec_output_dir = self.settings_manager.get_setting('recording_output_dir')
+            rec_output_dir = self.settings_manager.get_setting('recording_output_directory')
             self.rec_output_dir_edit.setText(str(rec_output_dir))
             
             record_mode = self.settings_manager.get_setting('record_mode')
@@ -96,10 +103,16 @@ class SettingsDialog(QDialog):
             
             # Enable/disable recording output directory based on record mode
             self.rec_output_dir_edit.setEnabled(bool(record_mode))
+            
+            # Load delete raw failed detections setting
+            delete_raw_failed = self.settings_manager.get_setting('delete_raw_failed_detections')
+            self.delete_raw_failed_checkbox.setChecked(bool(delete_raw_failed))
+            
         except Exception as e:
             print(f"Error loading settings: {str(e)}")
             # Set default values if loading fails
-            self.conf_slider.setValue(50)  # 0.5
+            self.conf_slider.setValue(30)  # 0.30
+            self.conf_value_label.setText("0.30")
             self.output_dir_edit.setText('')
             self.rec_output_dir_edit.setText('')
             self.record_mode_checkbox.setChecked(False)
@@ -124,16 +137,20 @@ class SettingsDialog(QDialog):
     def _on_record_mode_changed(self, state):
         """Handle record mode checkbox state change"""
         self.rec_output_dir_edit.setEnabled(state == Qt.Checked)
+        
+    def _on_auto_delete_raw_failed_detections(self, state):
+        """Handle auto delete raw failed detections checkbox state change"""
+        self.settings_manager.set_setting('delete_raw_failed_detections', state == Qt.Checked)
 
     def _save_settings(self):
         """Save settings and close dialog"""
         try:
             # Save settings with proper type conversion
-            self.settings_manager.set_setting('confidence_threshold', self.conf_slider.value() / 100)
-            self.settings_manager.set_setting('output_dir', self.output_dir_edit.text())
-            self.settings_manager.set_setting('recording_output_dir', self.rec_output_dir_edit.text())
+            # Don't save confidence threshold as it's fixed at 0.30
+            self.settings_manager.set_setting('output_directory', self.output_dir_edit.text())
+            self.settings_manager.set_setting('recording_output_directory', self.rec_output_dir_edit.text())
             self.settings_manager.set_setting('record_mode', self.record_mode_checkbox.isChecked())
-            
+            self.settings_manager.set_setting('delete_raw_failed_detections', self.delete_raw_failed_checkbox.isChecked())
             # Close dialog
             self.accept()
         except Exception as e:
@@ -154,3 +171,5 @@ class SettingsDialog(QDialog):
             QCheckBox::indicator:checked {background:#4a90e2; border:1px solid #4a90e2;}
             """
         )
+        
+    

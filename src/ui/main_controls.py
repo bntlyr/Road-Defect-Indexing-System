@@ -406,7 +406,7 @@ class MainControls(QGroupBox):
                 return
 
             # Get recording output directory
-            output_dir = self.settings_manager.get_setting('recording_output_dir')
+            output_dir = self.settings_manager.get_setting('recording_output_directory')
             if not output_dir:
                 QMessageBox.warning(self, "Warning", "Please set a recording output directory in settings.")
                 return

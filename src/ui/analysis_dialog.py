@@ -33,6 +33,16 @@ class AnalysisDialog(QDialog):
         self.show_delete_warning = True
         self.settings = SettingsManager()
         
+        # Get auto-delete setting with proper error handling
+        try:
+            self.auto_delete_raw_failed_detections = self.settings.get_setting('delete_raw_failed_detections')
+            if self.auto_delete_raw_failed_detections is None:
+                self.auto_delete_raw_failed_detections = False
+            logging.info(f"Auto-delete raw failed detections setting: {self.auto_delete_raw_failed_detections}")
+        except Exception as e:
+            logging.warning(f"Error retrieving auto-delete setting: {e}. Using default: False")
+            self.auto_delete_raw_failed_detections = False
+        
         # Initialize UI components
         self.file_list = None
         self.image_label = None
@@ -366,6 +376,9 @@ class AnalysisDialog(QDialog):
             model_path=os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models', 'road_defect.pt')
         )
         
+        # Log the auto-delete setting
+        logging.info(f"Auto-delete raw failed detections: {self.auto_delete_raw_failed_detections}")
+        
         # Camera calibration parameters
         camera_matrix = np.array([
             [1000, 0, 320],
@@ -403,7 +416,8 @@ class AnalysisDialog(QDialog):
                     distortion_coeffs=distortion_coeffs,
                     save_path=os.path.join(output_dir, f"processed_{filename}"),
                     distance_to_object_m=1.0,
-                    confidence_threshold=self.settings.get_confidence_threshold()
+                    confidence_threshold=self.settings.get_confidence_threshold(),
+                    auto_delete_raw_failed_detections=self.auto_delete_raw_failed_detections
                 )
                 
                 if processed_image is not None:
