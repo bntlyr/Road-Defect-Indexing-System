@@ -37,15 +37,10 @@ A comprehensive system for detecting, analyzing, and indexing road defects using
 ## Installation
 
 ### Easy Installation (Windows)
-1. Clone the repository with submodules:
+1. Clone the repository:
 ```bash
-# Method 1: Clone with submodules in one command
-git clone --recurse-submodules https://github.com/yourusername/Road-Defect-Indexing-System.git
-
-# OR Method 2: If you've already cloned without submodules
 git clone https://github.com/yourusername/Road-Defect-Indexing-System.git
 cd Road-Defect-Indexing-System
-git submodule update --init --recursive
 ```
 
 2. Run the setup script:
@@ -64,38 +59,6 @@ This will automatically:
 ```bash
 start.bat
 ```
-
-### Manual Installation
-If you prefer to install manually or are using a different operating system:
-
-1. Clone the repository with submodules:
-```bash
-# Method 1: Clone with submodules in one command
-git clone --recurse-submodules https://github.com/yourusername/Road-Defect-Indexing-System.git
-
-# OR Method 2: If you've already cloned without submodules
-git clone https://github.com/yourusername/Road-Defect-Indexing-System.git
-cd Road-Defect-Indexing-System
-git submodule update --init --recursive
-```
-
-2. Create and activate a virtual environment (recommended):
-```bash
-python -m venv venv
-# On Windows
-venv\Scripts\activate
-# On Linux/Mac
-source venv/bin/activate
-```
-
-3. Install required packages:
-```bash
-pip install -r requirements.txt
-```
-
-4. Download the YOLO model:
-- Place the model file (`road_defect.pt`) in the `models` directory
-- The model should be compatible with YOLOv10
 
 ## Project Structure
 
@@ -116,10 +79,12 @@ Road-Defect-Indexing-System/
 │   │   └── status_bar.py      # Status bar
 │   └── models/
 │       └── yolov10/           # YOLOv10 model submodule
+|       └── model.pt/          # your YOLOv10 model 
+|
 ├── public/
 │   └── icons/                 # Application icons
-├── config/
-│   └── settings.json          # Application settings
+├── scripts/
+│   └── testscripts/           # Test Scripts for Unit Testing or Feature Testing
 ├── requirements.txt
 ├── setup.bat
 └── start.bat
