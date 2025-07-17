@@ -956,20 +956,20 @@ class SeverityCalculator:
             # Update metadata with all calculated values
             output_metadata = {
                 'GPSLocation': gps_loc,
-                'SeverityLevel': severity_level,
-                'RealWorldArea': real_world_area,
+                'SeverityLevel': float(severity_level),
+                'RealWorldArea': float(real_world_area),
                 'DefectPixelCount': int(total_defect_pixels),
                 'TotalPixelCount': int(total_bbox_pixels),
-                'DistanceToObject': distance_to_object_m,
-                'ImageShape': undistorted_img.shape,
+                'DistanceToObject': float(distance_to_object_m),
+                'ImageShape': [int(x) for x in undistorted_img.shape],
                 'ProcessingTimestamp': datetime.now().isoformat(),
-                'FuzzySeverity': fuzzy_severity,
-                'RepairDecision': repair_decision,
-                'DefectCounts': defect_counts,
-                'AverageLength': avg_length_cm,
-                'AverageWidth': avg_width_cm,
-                'DefectRatio': defect_ratio,
-                'DominantDefectType': dominant_defect_type,
+                'FuzzySeverity': float(fuzzy_severity),
+                'RepairDecision': int(repair_decision),
+                'DefectCounts': {k: int(v) for k, v in defect_counts.items()},
+                'AverageLength': float(avg_length_cm),
+                'AverageWidth': float(avg_width_cm),
+                'DefectRatio': float(defect_ratio),
+                'DominantDefectType': str(dominant_defect_type),
             }
             
             # Save metadata as JSON

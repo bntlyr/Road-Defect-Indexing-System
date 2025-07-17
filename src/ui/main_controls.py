@@ -244,19 +244,13 @@ class MainControls(QGroupBox):
     def _try_connect_cloud(self):
         """Try to connect to cloud storage automatically"""
         try:
-            # Get cloud directory from settings or use default
-            cloud_dir = self.settings_manager.get_setting('cloud_directory')
-            if not cloud_dir:
-                # Use default cloud directory in user's home directory
-                cloud_dir = os.path.join(os.path.expanduser("~"), "RoadDefectCloud")
+            # Use default cloud directory in user's home directory
+            cloud_dir = os.path.join(os.path.expanduser("~"), "RoadDefectCloud")
             
             # Initialize cloud connector
             self.cloud_connector = CloudConnector(cloud_dir)
             self.cloud_connected = True
             self.cloud_btn.setText("Manage Cloud Storage")
-            
-            # Update settings with the cloud directory
-            self.settings_manager.set_setting('cloud_directory', cloud_dir)
             
         except Exception as e:
             print(f"Failed to connect to cloud storage automatically: {e}")
@@ -406,7 +400,7 @@ class MainControls(QGroupBox):
                 return
 
             # Get recording output directory
-            output_dir = self.settings_manager.get_setting('recording_output_directory')
+            output_dir = self.settings_manager.get_recording_directory()
             if not output_dir:
                 QMessageBox.warning(self, "Warning", "Please set a recording output directory in settings.")
                 return
@@ -591,8 +585,6 @@ class MainControls(QGroupBox):
                 self.cloud_connector = CloudConnector(cloud_dir)
                 self.cloud_connected = True
                 self.cloud_btn.setText("Manage Cloud Storage")
-                # Update settings with the cloud directory
-                self.settings_manager.set_setting('cloud_directory', cloud_dir)
                 # Open cloud manager dialog
                 self.open_cloud_manager()
         else:

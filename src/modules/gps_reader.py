@@ -1,4 +1,5 @@
 import serial
+from serial.serialutil import SerialException
 import serial.tools.list_ports
 import pynmea2
 import logging
@@ -74,7 +75,7 @@ class GPSReader:
                                         return True
                             except pynmea2.ParseError:
                                 continue
-                    except serial.SerialException:
+                    except SerialException:
                         break
                     
                     time.sleep(0.1)  # Small delay between reads
@@ -82,7 +83,7 @@ class GPSReader:
                 self.logger.debug(f"Port {port} did not provide valid GPS data")
                 return False
                 
-        except serial.SerialException as e:
+        except SerialException as e:
             self.logger.debug(f"Failed to connect to {port}: {e}")
             if "Access is denied" in str(e):
                 self.logger.warning(f"Access denied to port {port}. Port might be in use by another application.")
@@ -96,7 +97,7 @@ class GPSReader:
             # Try to open the port exclusively
             with serial.Serial(port, BAUDRATE, timeout=0.1) as ser:
                 return False
-        except serial.SerialException:
+        except SerialException:
             return True
 
     def _connect(self):
@@ -144,7 +145,7 @@ class GPSReader:
                                     return True
                         except pynmea2.ParseError:
                             continue
-                except serial.SerialException:
+                except SerialException:
                     break
                 
                 time.sleep(0.1)  # Small delay between reads
@@ -155,7 +156,7 @@ class GPSReader:
             self.connection_verified = False
             return False
             
-        except serial.SerialException as e:
+        except SerialException as e:
             self.logger.error(f"Failed to connect to GPS: {e}")
             self.serial = None
             self.connection_verified = False
@@ -343,7 +344,7 @@ class GPSReader:
                     if line.startswith('$GPGGA') or line.startswith('$GPRMC'):
                         self.port = port
                         return self._connect()  # Use persistent connection
-        except serial.SerialException as e:
+        except SerialException as e:
             self.logger.error(f"Failed to connect to port {port}: {e}")
             if "Access is denied" in str(e):
                 self.logger.warning(f"Access denied to port {port}. Please ensure no other application is using this port.")

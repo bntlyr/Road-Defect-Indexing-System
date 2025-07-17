@@ -43,7 +43,7 @@ class DefectDetector:
         if settings_manager is None:
             raise ValueError("Settings manager is required")
         self.settings_manager = settings_manager
-        logging.info(f"Using settings manager with output directory: {self.settings_manager.get_setting('output_directory')}")
+        logging.info(f"Using settings manager with output directory: {self.settings_manager.get_output_directory()}")
         
         # Initialize GPS data
         self._init_gps_data()
@@ -240,7 +240,7 @@ class DefectDetector:
         """Save detection results with GPS data and metadata in EXIF"""
         try:
             # Get output directory from settings
-            output_dir = self.settings_manager.get_setting('output_directory')
+            output_dir = self.settings_manager.get_output_directory()
             if not output_dir:
                 logging.error("No output directory set in settings")
                 return None

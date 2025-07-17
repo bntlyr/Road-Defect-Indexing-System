@@ -25,19 +25,28 @@ class SettingsDialog(QDialog):
         """Set up the settings dialog UI"""
         layout = QVBoxLayout(self)
         
-        # Confidence threshold (disabled)
-        conf_layout = QHBoxLayout()
+        # Confidence threshold
+        conf_layout = QVBoxLayout()
+        
+        # Checkbox to enable/disable custom confidence threshold
+        self.conf_enabled_checkbox = QCheckBox("Enable Custom Confidence Threshold")
+        self.conf_enabled_checkbox.stateChanged.connect(self._on_conf_enabled_changed)
+        conf_layout.addWidget(self.conf_enabled_checkbox)
+        
+        # Slider layout
+        conf_slider_layout = QHBoxLayout()
         conf_label = QLabel("Confidence Threshold:")
         self.conf_slider = QSlider(Qt.Horizontal)
         self.conf_slider.setMinimum(0)
         self.conf_slider.setMaximum(100)
-        self.conf_slider.setValue(30)  # Fixed at 0.30
-        self.conf_slider.setEnabled(False)  # Disable the slider
-        self.conf_value_label = QLabel("0.30")  # Fixed value
+        self.conf_slider.setEnabled(False)  # Disabled by default
+        self.conf_value_label = QLabel("0.30")  # Default value
         self.conf_slider.valueChanged.connect(self._update_conf_label)
-        conf_layout.addWidget(conf_label)
-        conf_layout.addWidget(self.conf_slider)
-        conf_layout.addWidget(self.conf_value_label)
+        conf_slider_layout.addWidget(conf_label)
+        conf_slider_layout.addWidget(self.conf_slider)
+        conf_slider_layout.addWidget(self.conf_value_label)
+        
+        conf_layout.addLayout(conf_slider_layout)
         layout.addLayout(conf_layout)
         
         # Output directory
@@ -87,15 +96,28 @@ class SettingsDialog(QDialog):
     def _load_current_settings(self):
         """Load current settings into the dialog"""
         try:
-            # Load current settings with proper type handling
-            # Always set confidence threshold to 0.30 (disabled)
-            self.conf_slider.setValue(30)  # 0.30
-            self.conf_value_label.setText("0.30")
+            # Load confidence threshold enabled state
+            conf_enabled = self.settings_manager.is_confidence_threshold_enabled()
+            self.conf_enabled_checkbox.setChecked(conf_enabled)
+            self.conf_slider.setEnabled(conf_enabled)
             
-            output_dir = self.settings_manager.get_setting('output_directory')
+            # Load confidence threshold value
+            if conf_enabled:
+                current_threshold = self.settings_manager.get_setting('confidence_threshold')
+                if current_threshold is not None:
+                    self.conf_slider.setValue(int(current_threshold * 100))
+                    self.conf_value_label.setText(f"{current_threshold:.2f}")
+                else:
+                    self.conf_slider.setValue(30)
+                    self.conf_value_label.setText("0.30")
+            else:
+                self.conf_slider.setValue(30)
+                self.conf_value_label.setText("0.30 (default)")
+            
+            output_dir = self.settings_manager.get_output_directory()  # Use helper method
             self.output_dir_edit.setText(str(output_dir))
             
-            rec_output_dir = self.settings_manager.get_setting('recording_output_directory')
+            rec_output_dir = self.settings_manager.get_recording_directory()  # Use helper method
             self.rec_output_dir_edit.setText(str(rec_output_dir))
             
             record_mode = self.settings_manager.get_setting('record_mode')
@@ -111,16 +133,23 @@ class SettingsDialog(QDialog):
         except Exception as e:
             print(f"Error loading settings: {str(e)}")
             # Set default values if loading fails
+            self.conf_enabled_checkbox.setChecked(False)
+            self.conf_slider.setEnabled(False)
             self.conf_slider.setValue(30)  # 0.30
-            self.conf_value_label.setText("0.30")
-            self.output_dir_edit.setText('')
-            self.rec_output_dir_edit.setText('')
+            self.conf_value_label.setText("0.30 (default)")
+            # Use helper methods for directories to ensure they exist
+            self.output_dir_edit.setText(self.settings_manager.get_output_directory())
+            self.rec_output_dir_edit.setText(self.settings_manager.get_recording_directory())
             self.record_mode_checkbox.setChecked(False)
             self.rec_output_dir_edit.setEnabled(False)
+            self.delete_raw_failed_checkbox.setChecked(False)
 
     def _update_conf_label(self, value):
         """Update the confidence threshold label"""
-        self.conf_value_label.setText(f"{value/100:.2f}")
+        if self.conf_enabled_checkbox.isChecked():
+            self.conf_value_label.setText(f"{value/100:.2f}")
+        else:
+            self.conf_value_label.setText("0.30 (default)")
 
     def _browse_directory(self):
         """Open directory browser for output directory"""
@@ -134,6 +163,25 @@ class SettingsDialog(QDialog):
         if dir_path:
             self.rec_output_dir_edit.setText(dir_path)
 
+    def _on_conf_enabled_changed(self, state):
+        """Handle confidence threshold enabled checkbox state change"""
+        enabled = state == Qt.Checked
+        self.conf_slider.setEnabled(enabled)
+        self.settings_manager.set_confidence_threshold_enabled(enabled)
+        
+        # Update the label to show current effective value
+        effective_value = self.settings_manager.get_confidence_threshold()
+        self.conf_value_label.setText(f"{effective_value:.2f}")
+        
+        if not enabled:
+            # When disabled, show the default value but don't change slider position
+            self.conf_value_label.setText("0.30 (default)")
+        else:
+            # When enabled, update slider to match current setting
+            current_threshold = self.settings_manager.get_setting('confidence_threshold')
+            if current_threshold is not None:
+                self.conf_slider.setValue(int(current_threshold * 100))
+
     def _on_record_mode_changed(self, state):
         """Handle record mode checkbox state change"""
         self.rec_output_dir_edit.setEnabled(state == Qt.Checked)
@@ -145,12 +193,25 @@ class SettingsDialog(QDialog):
     def _save_settings(self):
         """Save settings and close dialog"""
         try:
-            # Save settings with proper type conversion
-            # Don't save confidence threshold as it's fixed at 0.30
-            self.settings_manager.set_setting('output_directory', self.output_dir_edit.text())
-            self.settings_manager.set_setting('recording_output_directory', self.rec_output_dir_edit.text())
+            # Save confidence threshold only if enabled
+            if self.conf_enabled_checkbox.isChecked():
+                self.settings_manager.set_setting('confidence_threshold', self.conf_slider.value() / 100.0)
+            
+            # Save directories - check if they were actually set successfully
+            output_dir_success = self.settings_manager.set_setting('output_directory', self.output_dir_edit.text())
+            rec_dir_success = self.settings_manager.set_setting('recording_output_directory', self.rec_output_dir_edit.text())
+            
+            if not output_dir_success:
+                QMessageBox.warning(self, "Directory Error", "Failed to set output directory. Check permissions and path validity.")
+                return
+                
+            if not rec_dir_success:
+                QMessageBox.warning(self, "Directory Error", "Failed to set recording directory. Check permissions and path validity.")
+                return
+            
             self.settings_manager.set_setting('record_mode', self.record_mode_checkbox.isChecked())
             self.settings_manager.set_setting('delete_raw_failed_detections', self.delete_raw_failed_checkbox.isChecked())
+            
             # Close dialog
             self.accept()
         except Exception as e:
