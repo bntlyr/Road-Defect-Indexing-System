@@ -19,6 +19,10 @@ A comprehensive system for detecting, analyzing, and indexing road defects using
 - Run analysis for detailed defect assessment (Coming Soon)
 - Camera controls (zoom, flip)
 - Support for multiple camera inputs
+- **Interactive Web Mapping Interface**  
+  Displays detected road defects with precise GPS coordinates on an interactive map.  
+  Built using **Mapbox GL JS** and integrated with the system's PostgreSQL database.  
+  [View Mapping Module →](https://github.com/yourusername/road-defect-mapping)
 
 ## System Requirements
 
@@ -203,6 +207,12 @@ The system can be configured through the Settings dialog:
 3. Commit your changes
 4. Push to the branch
 5. Create a Pull Request
+
+## Related Repositories
+
+- [📍 Road Defect Mapping Web App](https://github.com/yourusername/road-defect-mapping)  
+  Interactive Mapbox-based dashboard for visualizing YOLOv10-detected road defects with GPS precision and road-type filtering.  
+  Developed as part of the **Comprehensive Road Defect Indexing System**.
 
 ## License
 
