@@ -21,7 +21,7 @@ A comprehensive system for detecting, analyzing, and indexing road defects using
 - Support for multiple camera inputs
 - Interactive Web Mapping Interface  
   - Displays detected road defects with precise GPS coordinates on an interactive map.
-    [View Mapping Module →](https://github.com/rvnztolentino/road-defect-indexing-maps)
+  - [View Mapping Module →](https://github.com/rvnztolentino/road-defect-indexing-maps)
 
 ## System Requirements
 
