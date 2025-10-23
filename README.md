@@ -209,7 +209,7 @@ The system can be configured through the Settings dialog:
 
 ## Related Repositories
 
-- [📍 Road Defect Mapping Web App](https://github.com/rvnztolentino/road-defect-indexing-maps)  
+- [Road Defect Mapping Web App](https://github.com/rvnztolentino/road-defect-indexing-maps)  
   Interactive Mapbox-based dashboard for visualizing YOLOv10-detected road defects with GPS precision and road-type filtering.  
   Developed as part of the **Comprehensive Road Defect Indexing System**.
 
