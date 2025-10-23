@@ -20,8 +20,7 @@ A comprehensive system for detecting, analyzing, and indexing road defects using
 - Camera controls (zoom, flip)
 - Support for multiple camera inputs
 - Interactive Web Mapping Interface  
-  - Displays detected road defects with precise GPS coordinates on an interactive map.  
-    Built using **Mapbox GL JS** and integrated with the system's PostgreSQL database.  
+  - Displays detected road defects with precise GPS coordinates on an interactive map.
     [View Mapping Module →](https://github.com/rvnztolentino/road-defect-indexing-maps)
 
 ## System Requirements
