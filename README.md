@@ -27,7 +27,7 @@ A comprehensive system for detecting, analyzing, and indexing road defects using
 
 ### Hardware Requirements
 - Camera (minimum 720p resolution, 1280x720 or Higher recommended)
-- GPS module (optional, for location tracking)
+- GPS module (REQUIRED, for location tracking)
 - GPU recommended for real-time detection (NVIDIA with CUDA support)
 
 ### Software Requirements
@@ -142,7 +142,6 @@ python -m src.app
 ### Configuration
 
 The system can be configured through the Settings dialog:
-- Confidence threshold adjustment
 - Output directory selection
 - Recording output directory
 - Record mode toggle
@@ -185,7 +184,6 @@ The system can be configured through the Settings dialog:
    - Try different camera index
 
 2. **Low Detection Accuracy**:
-   - Adjust confidence threshold
    - Check lighting conditions
    - Verify camera focus
 
@@ -235,43 +233,3 @@ For support or queries, please open an issue in the repository or contact the ma
   - Dashboard implementation
   - GPS integration
   - Cloud storage support 
-
-## Building the Application
-
-### Building into an Executable
-
-The application can be built into a standalone executable using PyInstaller. This process packages all dependencies and resources into a single file.
-
-#### Prerequisites
-- Python 3.8 or higher
-- PyInstaller (`pip install pyinstaller`)
-- Pillow (`pip install pillow`)
-
-#### Building Steps
-
-1. Ensure you have all dependencies installed:
-```bash
-pip install -r requirements.txt
-pip install pyinstaller pillow
-```
-
-2. Run the build script:
-```bash
-python build.py
-```
-
-The build script will:
-- Convert the application icon to ICO format
-- Package all necessary files and dependencies
-- Create a single executable in the `dist` directory
-
-#### Build Output
-- The executable will be created in the `dist` directory
-- All required resources (models, icons, etc.) will be included
-- The application will run without requiring Python installation
-
-#### Notes
-- The build process excludes PyQt5 to prevent conflicts with PyQt6
-- The executable includes all necessary dependencies
-- The build process may take several minutes to complete
-- The resulting executable is self-contained and can be distributed 
