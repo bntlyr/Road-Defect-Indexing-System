@@ -1,235 +1,175 @@
 # Road Defect Indexing System
 
-A comprehensive system for detecting, analyzing, and indexing road defects using computer vision and machine learning. This system provides real-time detection of road defects through a camera feed or video file, processes the defects using advanced image processing techniques, and calculates severity using fuzzy logic.
+A comprehensive system for detecting, analyzing, and indexing road defects using YOLOv10 computer vision and fuzzy logic severity assessment.
 
 ## Features
 
-- Real-time road defect detection using YOLOv10
-- Multiple defect type detection:
-  - Linear Cracks
-  - Alligator Cracks
-  - Potholes
-- Support for both live camera feed and video file analysis
-- Advanced image processing for defect enhancement
-- Fuzzy logic-based severity calculation
-- GPS integration for defect location tracking
-- Cloud storage integration
-- Real-time visualization dashboard 
-- Defect statistics and analysis
-- Run analysis for detailed defect assessment (Coming Soon)
-- Camera controls (zoom, flip)
-- Support for multiple camera inputs
-- Interactive Web Mapping Interface  
-  - Displays detected road defects with precise GPS coordinates on an interactive map.
-  - [View Mapping Module →](https://github.com/rvnztolentino/road-defect-indexing-maps)
+- **Real-time Detection** - YOLOv10-powered defect detection via camera or video file
+- **Multi-Defect Support** - Linear cracks, alligator cracks, and potholes
+- **GPS Integration** - Precise location tracking for all detected defects
+- **Cloud Storage** - Automated data backup and synchronization
+- **Live Dashboard** - Real-time visualization with statistics and analysis
+- **Camera Controls** - Zoom, flip, and multi-camera support
+- **Web Mapping** - [Interactive defect visualization](https://github.com/rvnztolentino/road-defect-indexing-maps)
 
-## System Requirements
+## Requirements
 
-### Hardware Requirements
-- Camera (minimum 720p resolution, 1280x720 or Higher recommended)
-- GPS module (REQUIRED, for location tracking)
-- GPU recommended for real-time detection (NVIDIA with CUDA support)
+### Hardware
+- Camera: 720p minimum (1280x720+ recommended)
+- GPS module: NMEA-compatible (required)
+- GPU: NVIDIA with CUDA support (recommended)
 
-### Software Requirements
-- Python 3.8 or higher
+### Software
+- Python 3.8+
 - OpenCV 4.x
 - PyQt5
-- CUDA Toolkit (if using GPU)
-- Other dependencies listed in requirements.txt
+- CUDA Toolkit (for GPU acceleration)
+- Dependencies in `requirements.txt`
 
-## Installation
+## Quick Start
 
-### Easy Installation (Windows)
-1. Clone the repository:
+### Windows Installation
+
+1. **Clone the repository**
 ```bash
 git clone https://github.com/yourusername/Road-Defect-Indexing-System.git
 cd Road-Defect-Indexing-System
 ```
 
-2. Run the setup script:
+2. **Run automated setup**
 ```bash
 setup.bat
 ```
-This will automatically:
-- Check Python installation
-- Create a virtual environment
-- Install all required packages
-- Check for CUDA support
-- Create necessary directories
-- Verify YOLO model presence
+Automatically handles: Python verification, virtual environment creation, package installation, CUDA detection, directory setup, and model verification.
 
-3. Start the application:
+3. **Launch application**
 ```bash
 start.bat
 ```
 
-## Project Structure
+### Manual Start
+```bash
+python -m src.app
+```
 
+## Project Structure
 ```
 Road-Defect-Indexing-System/
 ├── src/
-│   ├── app.py                 # Main application entry point
+│   ├── app.py                    # Application entry point
 │   ├── modules/
-│   │   ├── camera.py          # Camera handling
-│   │   ├── detection.py       # Defect detection
-│   │   ├── gps_reader.py      # GPS integration
-│   │   └── cloud_connector.py # Cloud storage
-│   ├── ui/
-│   │   ├── dashboard.py       # Main GUI dashboard
-│   │   ├── video_controls.py  # Video/camera controls
-│   │   ├── main_controls.py   # Main control panel
-│   │   ├── statistics.py      # Statistics display
-│   │   └── status_bar.py      # Status bar
+│   │   ├── camera.py             # Camera handling
+│   │   ├── detection.py          # Defect detection engine
+│   │   ├── gps_reader.py         # GPS integration
+│   │   └── cloud_connector.py    # Cloud storage
+│   ├── ui/                       # GUI components
+│   │   ├── dashboard.py
+│   │   ├── video_controls.py
+│   │   ├── main_controls.py
+│   │   ├── statistics.py
+│   │   └── status_bar.py
 │   └── models/
-│       └── yolov10/           # YOLOv10 model submodule
-|       └── model.pt/          # your YOLOv10 model 
-|
-├── public/
-│   └── icons/                 # Application icons
-├── scripts/
-│   └── testscripts/           # Test Scripts for Unit Testing or Feature Testing
+│       ├── yolov10/              # YOLOv10 submodule
+│       └── model.pt              # Trained model
+├── public/icons/
+├── scripts/testscripts/
 ├── requirements.txt
 ├── setup.bat
 └── start.bat
 ```
 
-## Usage
+## Usage Guide
 
-### Starting the Application
+### Dashboard Overview
 
-1. Ensure all dependencies are installed and the model is in place
-2. Run the main application:
-```bash
-python -m src.app
-```
+**1. Video Source**
+- Camera: Select from available devices
+- Video File: Upload for batch processing
 
-### Using the Dashboard
+**2. Camera Controls** (Live mode)
+- Zoom adjustment
+- View orientation flip
 
-1. **Video Source Selection**:
-   - Choose between camera feed or video file
-   - For camera: Select from available cameras
-   - For video: Upload a video file
+**3. Playback Controls** (Video mode)
+- Play/Pause, Rewind/Forward
+- Progress tracking
 
-2. **Camera Controls** (when using camera):
-   - Adjust zoom level
-   - Flip camera view if needed
+**4. Detection**
+- Start/Stop detection
+- Real-time results visualization
+- Live statistics monitoring
 
-3. **Video Playback Controls** (when using video file):
-   - Play/Pause
-   - Rewind/Forward
-   - Progress tracking
+**5. GPS & Cloud**
+- Auto-connects to GPS module
+- Coordinates logged per defect
+- Cloud sync for data backup
 
-4. **Detection**:
-   - Click "Start Detection" to begin defect detection
-   - View detection results in real-time
-   - Monitor defect statistics in the dashboard
-
-5. **GPS Integration**:
-   - Automatically connects to available GPS
-   - GPS coordinates are logged with detected defects
-
-6. **Cloud Integration**:
-   - Connect to cloud storage
-   - Upload detection data
-   - Manage cloud storage
-
-7. **Analysis** (Coming Soon):
-   - Run detailed analysis on recorded defects
-   - Generate comprehensive reports
-   - View severity trends and patterns
-   - Export analysis results
+**6. Analysis** *(Coming Soon)*
+- Detailed defect reports
+- Severity trend analysis
+- Export capabilities
 
 ### Configuration
+Access via Settings dialog:
+- Output directories
+- Recording options
+- Cloud storage credentials
+- Analysis parameters
 
-The system can be configured through the Settings dialog:
-- Output directory selection
-- Recording output directory
-- Record mode toggle
-- Cloud storage settings
-- Analysis settings 
+## Technical Overview
 
-## Technical Details
-
-### Defect Detection
-- Uses YOLOv10 for real-time object detection
-- Configurable confidence threshold
-- Supports multiple defect types
-- Real-time processing
-
-### Image Processing Pipeline
+**Detection Pipeline**
 1. Image acquisition
 2. Preprocessing
-3. Defect detection
+3. YOLOv10 detection
 4. Post-processing
-5. Severity calculation
+5. Fuzzy logic severity calculation
 
-### GPS Integration
-- Supports NMEA-compatible GPS modules
+**GPS Integration**
+- NMEA protocol support
 - Automatic port detection
 - Real-time coordinate logging
 
-### Cloud Storage
-- Supports cloud storage integration
+**Cloud Storage**
 - Efficient data transmission
-- Defect metadata storage
-- Image backup
+- Metadata and image backup
 
 ## Troubleshooting
 
-### Common Issues
+| Issue | Solution |
+|-------|----------|
+| Camera not detected | Check connections, verify permissions, try different camera index |
+| Low detection accuracy | Improve lighting, verify camera focus |
+| GPS connection failed | Check COM port, ensure clear sky view |
+| Performance lag | Enable GPU acceleration, reduce resolution, close background apps |
 
-1. **Camera Not Detected**:
-   - Check camera connection
-   - Verify camera permissions
-   - Try different camera index
+## Related Projects
 
-2. **Low Detection Accuracy**:
-   - Check lighting conditions
-   - Verify camera focus
-
-3. **GPS Connection Issues**:
-   - Check GPS module connection
-   - Verify correct COM port
-   - Ensure clear sky view
-
-4. **Performance Issues**:
-   - Enable GPU acceleration
-   - Reduce processing resolution
-   - Close unnecessary applications
+**[Road Defect Mapping Web App](https://github.com/rvnztolentino/road-defect-indexing-maps)**  
+Interactive Mapbox dashboard for visualizing detected defects with GPS precision and road-type filtering. Part of the Comprehensive Road Defect Indexing System.
 
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## Related Repositories
-
-- [Road Defect Mapping Web App](https://github.com/rvnztolentino/road-defect-indexing-maps)  
-  Interactive Mapbox-based dashboard for visualizing YOLOv10-detected road defects with GPS precision and road-type filtering.  
-  Developed as part of the **Comprehensive Road Defect Indexing System**.
+2. Create feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit changes (`git commit -m 'Add AmazingFeature'`)
+4. Push to branch (`git push origin feature/AmazingFeature`)
+5. Open Pull Request
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License - see LICENSE file for details.
 
 ## Acknowledgments
 
-- YOLO team for the object detection framework
-- OpenCV community
-- PyQt team
-- Contributors and maintainers
+- YOLO team for detection framework
+- OpenCV and PyQt communities
+- All contributors and maintainers
 
-## Contact
+## Version
 
-For support or queries, please open an issue in the repository or contact the maintainers.
+**v1.0.0** - Initial release with core detection, dashboard, GPS integration, and cloud storage support.
 
-## Version History
+---
 
-- v1.0.0: Initial release
-  - Basic defect detection
-  - Dashboard implementation
-  - GPS integration
-  - Cloud storage support 
+**Support**: Open an issue for questions or bug reports.
