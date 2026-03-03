@@ -136,12 +136,10 @@ Access via Settings dialog:
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| Camera not detected | Check connections, verify permissions, try different camera index |
-| Low detection accuracy | Improve lighting, verify camera focus |
-| GPS connection failed | Check COM port, ensure clear sky view |
-| Performance lag | Enable GPU acceleration, reduce resolution, close background apps |
+- **Camera not detected** - Check connections, verify permissions, try different camera index
+- **Low detection accuracy** - Improve lighting, verify camera focus
+- **GPS connection failed** - Check COM port, ensure clear sky view
+- **Performance lag** - Enable GPU acceleration, reduce resolution, close background apps
 
 ## Related Projects
 
